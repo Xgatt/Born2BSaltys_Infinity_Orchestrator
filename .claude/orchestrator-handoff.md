@@ -8,7 +8,18 @@
 
 ## Active phase work order
 
-`infinity_orchestrator/plan/phase-06-create-workspace-shell.md` — the active phase work order (Phase 6 in progress: R1/R2 + Step-3 C4 P6.T2d shipped; **Run 3 = P6.T7/T9/T13/T14 dispatched 2026-05-17**; Run 4 = P6.T8 fork + P6.T11 dirty-bit + P6.T15 nav-flush). (Update this pointer as phases advance.)
+`infinity_orchestrator/plan/phase-07-install-runtime.md` — **Phase 6 COMPLETE** (R1/R2/Step-3-C4/R3/R4 shipped + cascaded; pending only the user's visual sign-off on the 9 `PENDING_VERIFICATION.md` items). **Active phase = Phase 7 (Step-5 install runtime).** This branch `overhaul/infinity_orchestrator-p7` (off `ed146dd`) is the Phase-7 work branch.
+
+### Phase 7 — prep: proposed 4-run slice (orchestrator 2026-05-17; pending the user's go to dispatch P7.R1)
+
+- **P7.R1 — Step-5 chrome spine + install start:** P7.T1 (`OrchestratorApp` Step-5 runtime fields), P7.T2 (workspace Step-5 chrome wrapping `bio::ui::step5::page_step5::render` — the C4-reuse spine: net-new chrome in sibling rows ABOVE/BELOW, never inside the Step-5 tree), P7.T3 (install-start hook — dispatch `Step5Action::StartInstall` the BIO way: `state.step5.start_install_requested = true`), P7.T15 (Install-Modlist stage-4 real — its own simpler progress screen around the same `page_step5::render`). Breakpoint: install runs in-workspace AND via Install-stage-4; console streams; prompts auto-answer.
+- **P7.R2 — Post-install lifecycle + registry transition:** P7.T4 (success banner — the **C3 clean-exit triple** `install_running==false && last_exit_code==Some(0) && last_install_failed==false`; NOT `errors_detected`), P7.T5 (post-install action row, **H9** placement immediately above BIO's panel), P7.T6+P7.T12 (registry `in_progress`→`installed` on success + Home moves the card), P7.T7 (`SharePasteCodeDialog`), P7.T11 (`modlist-import-code.txt` write semantics).
+- **P7.R3 — Locks + concurrency + reinstall + cancel + statusbar:** P7.T8 (workspace nav lock), P7.T9 (install concurrency gate), **P7.T9b (rail-nav lock — C5; the loader must never run mid-install; `registry_snapshot` dropped per H8)**, P7.T10 (Reinstall — registry flips at the *Install* click in the forced-overwrite preview, not at Reinstall click), P7.T13 (graceful cancel preserves `resume_available`), P7.T14 (statusbar `1 job running · <modlist> · <elapsed>`).
+- **P7.R4 — the live pipeline (§13.12a — terminates the Phase-5/6 deferral):** P7.T16 (auto flag policies #1/#5), **P7.T17** (per-install dirs + content-addressed archive staging + import→auto-build pipeline drive — wires the Phase-5 §4.3 Downloading chassis + the Phase-6 fork-download chassis **live**). Highest complexity/risk; its own run.
+
+**Carried context for every P7 brief:** BIO reuse = call `bio::ui::step5::page_step5::render` directly (verified signature in the plan Summary), chrome net-new *around* it (the Steps-2/4 C4-reuse pattern; never reach inside the Step-5 tree); dispatch `StartInstall` via the same `bio::app::*` `handle_step5_action` path BIO uses; the **C3 triple** replaces every `errors_detected`; **C5** rail-lock + **H8** (no `registry_snapshot`); **H9** action-row placement; Phase-6 Workspace shell + Step-5 stub (P7.T2 replaces the stub); Phase-5 `format_relative.rs` (P7.T4 duration); orchestrator owns one `WizardState`; registry transitions = Phase-3; **§13.12a live wiring is P7.T17**. The skill's "How to run a run" + the hardened step-4 explicit-reconciled-staging gate apply. **Not dispatched yet** — "start prepping" delivered the slice + branch; a future "proceed with the next run" dispatches P7.R1.
+
+(Update this pointer as phases advance.)
 
 ## Where the thread is
 
