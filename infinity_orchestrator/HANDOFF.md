@@ -51,6 +51,11 @@ After phases 5–8 land, the binary is feature-complete per the SPEC (modulo the
 
 **Dispatch policy:** each fix-set as one plan-implementer run per the dispatch-grouped-fixes memory; full gate set (BIO-source guard + scoped clippy + comment hygiene + scoped rustfmt + `cargo test --lib` + both binaries + DATA-LOSS sentinel + runtime trace + render PNGs); per-run branch + PR per the workflow above. Each set must land + user-test cleanly before the next dispatches.
 
+**Pre-authored dispatch briefs live under `infinity_orchestrator/runs/`.** When a brief is queued (already authored against a specific HEAD), the next orchestrator picks it up, re-validates the assumptions against current HEAD, and dispatches. Each run brief is durable across the run + post-merge: useful as a historical record of what was dispatched and how it was scoped.
+
+**Queued runs (next first):**
+- **P8.T2 + P8.T7 — Popup title-bar collapse-chevron flips.** Brief at `infinity_orchestrator/runs/p8-t2-t7-popup-collapse-chevrons.md`. Eight single-keyword `.collapsible(false)` → `.collapsible(true)` flips across 6 BIO files under existing carve-out #2, plus P8.T7's empirical anchor-on-collapse verification. Target branch `feat/popup-collapse-chevrons` (re-create from current HEAD). Queued 2026-05-23 against HEAD `0a97cf3`. **Status: blocked on `.claude` restructure** — the project's `plan-implementer` agent is not currently discoverable as a `subagent_type` (Glob-style traversal fails on the junction; skills load via a different code path; agents do not). Once the restructure makes `plan-implementer` discoverable, the brief is ready to dispatch as-is.
+
 **PR #5 (5 commits) + PR #6 (Born2BSalty cleanup) BOTH MERGED into `overhaul/infinity_orchestrator`** (HEAD `6ea7b5c` as of 2026-05-21). Working tree clean.
 
 **Item #4 Create-fork post-route UX — arc-closing PR open** (branch `xgatt/create-then-modify-fix`, single-branch arc, six runs). Both 🔴 data-loss bugs surfaced by the workflow-trace audit closed by Run 6.
