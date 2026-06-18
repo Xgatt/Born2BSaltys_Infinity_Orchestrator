@@ -897,14 +897,20 @@ fn toast_version_override_warnings_once(
         .install_screen_state
         .pipeline_flags
         .set_override_warnings_toasted(true);
-    let warnings: Vec<String> = orchestrator
+    let warnings = &orchestrator
         .wizard_state
         .step2
-        .update_selected_version_override_warnings
-        .clone();
-    for warning in warnings {
-        orchestrator.notification_manager.warn(warning);
+        .update_selected_version_override_warnings;
+    if warnings.is_empty() {
+        return;
     }
+    let message = build_version_override_toast(warnings);
+    orchestrator.notification_manager.warn_persistent(message);
+}
+
+fn build_version_override_toast(warnings: &[String]) -> String {
+    let header = "Pinned versions of the following mods not available. Latest will be installed:";
+    format!("{header}\n- {}", warnings.join("\n- "))
 }
 
 fn route_install_to_step5(state: &mut crate::app::state::WizardState) {
@@ -2617,5 +2623,28 @@ mod tests {
         assert_eq!(InstallPhase::Downloading.verb(), "Downloading");
         assert_eq!(InstallPhase::Extracting.verb(), "Extracting");
         assert_eq!(InstallPhase::default(), InstallPhase::Downloading);
+    }
+
+    #[test]
+    fn build_version_override_toast_single_entry() {
+        let warnings = vec!["ISNF (6.5.5 -> 6.5.6)".to_string()];
+        let msg = build_version_override_toast(&warnings);
+        assert_eq!(
+            msg,
+            "Pinned versions of the following mods not available. Latest will be installed:\n- ISNF (6.5.5 -> 6.5.6)"
+        );
+    }
+
+    #[test]
+    fn build_version_override_toast_multiple_entries() {
+        let warnings = vec![
+            "ISNF (6.5.5 -> 6.5.6)".to_string(),
+            "OtherMod (v0.3 -> v1.0)".to_string(),
+        ];
+        let msg = build_version_override_toast(&warnings);
+        assert_eq!(
+            msg,
+            "Pinned versions of the following mods not available. Latest will be installed:\n- ISNF (6.5.5 -> 6.5.6)\n- OtherMod (v0.3 -> v1.0)"
+        );
     }
 }
