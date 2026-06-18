@@ -520,6 +520,7 @@ pub fn render_live(
     verify_downloaded_archives_once(orchestrator, &inputs.destination);
     ingest_downloaded_archives_once(orchestrator, &inputs.destination);
     install_empty_asset_clean_finish(orchestrator);
+    gate_pre_step5_blocker_once(orchestrator);
     toast_version_override_warnings_once(orchestrator);
 
     let progress = build_and_hold_progress(orchestrator);
@@ -821,15 +822,9 @@ fn install_empty_asset_clean_finish(
         .update_selected_extracted_sources
         .len();
     let archives_observed = extracted_count + skip_count;
-    let failed_sources = &orchestrator
-        .wizard_state
-        .step2
-        .update_selected_failed_sources;
-    if !failed_sources.is_empty() {
-        let reason = format!(
-            "failed source check: {}",
-            failed_sources.first().map_or("(unknown)", String::as_str)
-        );
+    if let Some(reason) = crate::app::app_step2_saved_log_flow::unresolved_required_mods_blocker(
+        &orchestrator.wizard_state,
+    ) {
         orchestrator.install_screen_state.pipeline_arm_error = Some(reason.clone());
         orchestrator.wizard_state.modlist_auto_build_active = false;
         orchestrator
@@ -849,6 +844,39 @@ fn install_empty_asset_clean_finish(
             "install path: zero assets after resolve — routing to Step 5"
         );
         route_install_to_step5(&mut orchestrator.wizard_state);
+    }
+}
+
+fn gate_pre_step5_blocker_once(
+    orchestrator: &mut crate::ui::orchestrator::orchestrator_app::OrchestratorApp,
+) {
+    let flags = orchestrator.install_screen_state.pipeline_flags;
+    if !flags.armed()
+        || !flags.explicit_resolve_started()
+        || orchestrator
+            .install_screen_state
+            .pipeline_arm_error
+            .is_some()
+        || !orchestrator.wizard_state.modlist_auto_build_active
+        || orchestrator
+            .wizard_state
+            .step2
+            .update_selected_check_running
+        || !flags.archives_ingested()
+        || orchestrator.install_screen_state.pre_step5_blocker_checked
+    {
+        return;
+    }
+    orchestrator.install_screen_state.pre_step5_blocker_checked = true;
+    if let Some(reason) = crate::app::app_step2_saved_log_flow::unresolved_required_mods_blocker(
+        &orchestrator.wizard_state,
+    ) {
+        orchestrator.install_screen_state.pipeline_arm_error = Some(reason.clone());
+        orchestrator.wizard_state.modlist_auto_build_active = false;
+        orchestrator
+            .wizard_state
+            .modlist_auto_build_waiting_for_install = false;
+        tracing::warn!(target = "orchestrator", "{reason}");
     }
 }
 

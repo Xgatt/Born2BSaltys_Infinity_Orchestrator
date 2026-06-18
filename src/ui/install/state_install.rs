@@ -225,6 +225,7 @@ pub struct InstallScreenState {
     pub download_progress: DownloadProgress,
     pub pipeline_flags: InstallPipelineFlags,
     pub pipeline_arm_error: Option<String>,
+    pub pre_step5_blocker_checked: bool,
     pub expected_archive_meta: Vec<crate::registry::share_export::ArchiveMeta>,
     pub pre_skip_assets: Vec<crate::app::state::Step2UpdateAsset>,
     pub skipped_mods: Vec<SkippedMod>,
