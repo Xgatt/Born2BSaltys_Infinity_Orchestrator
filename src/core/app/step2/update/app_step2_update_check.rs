@@ -240,10 +240,7 @@ fn apply_successful_update_check_outcome(
         state
             .step2
             .update_selected_version_override_warnings
-            .push(format!(
-                "{}: pinned {wanted} unavailable \u{2014} installed latest {tag}",
-                outcome.label
-            ));
+            .push(format!("{} ({wanted} -> {tag})", outcome.label));
     }
     let has_current_version = mod_has_current_version(state, &outcome.game_tab, &outcome.tp_file);
     let allow_log_missing_download =
@@ -466,7 +463,7 @@ pub(crate) fn clear_update_check_result_for_mod(
     state
         .step2
         .update_selected_version_override_warnings
-        .retain(|entry| !entry.starts_with(&format!("{label}:")));
+        .retain(|entry| !entry.starts_with(&format!("{label} (")));
 }
 
 fn store_latest_checked_version(state: &mut WizardState, game_tab: &str, tp_file: &str, tag: &str) {
@@ -657,20 +654,10 @@ mod tests {
             state.step2.update_selected_update_assets[0].tag, "6.5.6",
             "asset must carry the current (served) version tag"
         );
-        assert!(
-            !state
-                .step2
-                .update_selected_version_override_warnings
-                .is_empty(),
-            "override outcome must record a warning"
-        );
-        assert!(
-            state.step2.update_selected_version_override_warnings[0].contains("6.5.5"),
-            "warning must name the pinned version"
-        );
-        assert!(
-            state.step2.update_selected_version_override_warnings[0].contains("6.5.6"),
-            "warning must name the installed (latest) version"
+        assert_eq!(
+            state.step2.update_selected_version_override_warnings,
+            vec!["ISNF (6.5.5 -> 6.5.6)"],
+            "override warning must use compact format: label (pinned -> served)"
         );
     }
 }

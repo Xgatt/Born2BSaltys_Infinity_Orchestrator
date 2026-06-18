@@ -282,7 +282,7 @@ fn append_result_sections(lines: &mut Vec<String>, state: &WizardState, modes: P
     {
         append_spaced_report_section(
             lines,
-            "Pinned Version Unavailable \u{2014} Using Latest",
+            "Pinned versions of the following mods not available. Latest will be installed:",
             &state.step2.update_selected_version_override_warnings,
         );
     }
