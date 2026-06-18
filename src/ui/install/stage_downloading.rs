@@ -520,6 +520,7 @@ pub fn render_live(
     verify_downloaded_archives_once(orchestrator, &inputs.destination);
     ingest_downloaded_archives_once(orchestrator, &inputs.destination);
     install_empty_asset_clean_finish(orchestrator);
+    toast_version_override_warnings_once(orchestrator);
 
     let progress = build_and_hold_progress(orchestrator);
     let arm_error = orchestrator.install_screen_state.pipeline_arm_error.clone();
@@ -848,6 +849,33 @@ fn install_empty_asset_clean_finish(
             "install path: zero assets after resolve — routing to Step 5"
         );
         route_install_to_step5(&mut orchestrator.wizard_state);
+    }
+}
+
+fn toast_version_override_warnings_once(
+    orchestrator: &mut crate::ui::orchestrator::orchestrator_app::OrchestratorApp,
+) {
+    let flags = orchestrator.install_screen_state.pipeline_flags;
+    if !flags.explicit_resolve_started()
+        || orchestrator
+            .wizard_state
+            .step2
+            .update_selected_check_running
+        || flags.override_warnings_toasted()
+    {
+        return;
+    }
+    orchestrator
+        .install_screen_state
+        .pipeline_flags
+        .set_override_warnings_toasted(true);
+    let warnings: Vec<String> = orchestrator
+        .wizard_state
+        .step2
+        .update_selected_version_override_warnings
+        .clone();
+    for warning in warnings {
+        orchestrator.notification_manager.warn(warning);
     }
 }
 

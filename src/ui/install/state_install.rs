@@ -124,6 +124,7 @@ impl InstallPipelineFlags {
     const DOWNLOAD_PHASE_STARTED: u8 = 0b0001_0000;
     const ARCHIVE_SKIP_COMPLETED: u8 = 0b0010_0000;
     const EXPLICIT_RESOLVE_STARTED: u8 = 0b0100_0000;
+    const OVERRIDE_WARNINGS_TOASTED: u8 = 0b1000_0000;
 
     #[must_use]
     pub const fn armed(self) -> bool {
@@ -186,6 +187,15 @@ impl InstallPipelineFlags {
 
     pub const fn set_explicit_resolve_started(&mut self, value: bool) {
         self.set_bit(Self::EXPLICIT_RESOLVE_STARTED, value);
+    }
+
+    #[must_use]
+    pub const fn override_warnings_toasted(self) -> bool {
+        self.bits & Self::OVERRIDE_WARNINGS_TOASTED != 0
+    }
+
+    pub const fn set_override_warnings_toasted(&mut self, value: bool) {
+        self.set_bit(Self::OVERRIDE_WARNINGS_TOASTED, value);
     }
 
     pub const fn reset(&mut self) {
