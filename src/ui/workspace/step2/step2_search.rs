@@ -19,7 +19,7 @@ const DROPDOWN_MIN_W: f32 = 160.0;
 
 const RESCAN_DISABLED_TIP: &str = "Available after install prep (Phase 7) \u{2014} \
      the mods folder is extracted per-install at prep time (SPEC \u{00A7}13.12a). \
-     Use the dev scan in dev mode to exercise scanning before then.";
+     Use \u{201C}Global mods folder\u{201D} to scan your configured mods folder in the meantime.";
 
 const GLOBAL_MODS_DISABLED_TIP: &str =
     "No mods folder configured. Set it in Settings \u{2192} Paths \u{2192} Mods folder.";
