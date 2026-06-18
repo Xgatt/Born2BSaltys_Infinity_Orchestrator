@@ -16,6 +16,13 @@ const SEARCH_INPUT_H: f32 = 30.0;
 const ROW_GAP: f32 = 10.0;
 const SEARCH_INPUT_TEXT_PAD: i8 = 8;
 const DROPDOWN_MIN_W: f32 = 160.0;
+const TRIGGER_LABEL: &str = "Rescan Mods";
+const TRIGGER_PAD_X: f32 = 10.0;
+const TRIGGER_PAD_Y: f32 = 4.0;
+const TRIGGER_FONT_SIZE: f32 = 12.0;
+const CARET_GAP: f32 = 7.0;
+const CARET_W: f32 = 9.0;
+const CARET_H: f32 = 5.0;
 
 const RESCAN_DISABLED_TIP: &str = "Available after install prep (Phase 7) \u{2014} \
      the mods folder is extracted per-install at prep time (SPEC \u{00A7}13.12a). \
@@ -46,13 +53,12 @@ pub fn render(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
 
-            let dropdown_label = if is_scanning {
-                "Cancel Scan"
+            let trigger_w = if is_scanning {
+                small_btn_width(ui, "Cancel Scan")
             } else {
-                "Rescan Mods \u{25be}"
+                rescan_trigger_width(ui)
             };
-            let dropdown_w = small_btn_width(ui, dropdown_label);
-            let search_w = (rect.width() - dropdown_w - ROW_GAP).max(80.0);
+            let search_w = (rect.width() - trigger_w - ROW_GAP).max(80.0);
 
             let search_margin = egui::Margin::symmetric(SEARCH_INPUT_TEXT_PAD, 4);
             let _resp = redesign_text_input(
@@ -80,7 +86,7 @@ pub fn render(
                 if redesign_btn(
                     ui,
                     palette,
-                    dropdown_label,
+                    "Cancel Scan",
                     BtnOpts {
                         small: true,
                         ..Default::default()
@@ -92,15 +98,7 @@ pub fn render(
                     action = Some(Step2Action::CancelScan);
                 }
             } else {
-                let trigger = redesign_btn(
-                    ui,
-                    palette,
-                    dropdown_label,
-                    BtnOpts {
-                        small: true,
-                        ..Default::default()
-                    },
-                );
+                let trigger = rescan_trigger(ui, palette);
                 let popup_id = ui.make_persistent_id("step2_rescan_mods_dropdown");
                 if trigger.clicked() {
                     ui.memory_mut(|mem| mem.toggle_popup(popup_id));
@@ -312,4 +310,76 @@ fn small_btn_width(ui: &egui::Ui, label: &str) -> f32 {
         .painter()
         .layout_no_wrap(label.to_string(), font, egui::Color32::WHITE);
     10.0_f32.mul_add(2.0, galley.size().x)
+}
+
+fn trigger_font() -> egui::FontId {
+    egui::FontId::new(
+        TRIGGER_FONT_SIZE,
+        egui::FontFamily::Name("poppins_medium".into()),
+    )
+}
+
+fn rescan_trigger_width(ui: &egui::Ui) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        TRIGGER_LABEL.to_string(),
+        trigger_font(),
+        egui::Color32::WHITE,
+    );
+    TRIGGER_PAD_X.mul_add(2.0, galley.size().x) + CARET_GAP + CARET_W
+}
+
+fn rescan_trigger(ui: &mut egui::Ui, palette: ThemePalette) -> egui::Response {
+    let text_color = redesign_text_primary(palette);
+    let font = trigger_font();
+    let galley = ui
+        .painter()
+        .layout_no_wrap(TRIGGER_LABEL.to_string(), font.clone(), text_color);
+    let content_w = galley.size().x + CARET_GAP + CARET_W;
+    let size = egui::vec2(
+        TRIGGER_PAD_X.mul_add(2.0, content_w),
+        TRIGGER_PAD_Y.mul_add(2.0, galley.size().y),
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let rect = if response.is_pointer_button_down_on() {
+        rect.translate(egui::vec2(1.0, 1.0))
+    } else {
+        rect
+    };
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let radius = egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8);
+        painter.rect_filled(rect, radius, redesign_shell_bg(palette));
+        painter.rect_stroke(
+            rect,
+            radius,
+            egui::Stroke::new(REDESIGN_BORDER_WIDTH_PX, redesign_border_strong(palette)),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            egui::pos2(rect.left() + TRIGGER_PAD_X, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            TRIGGER_LABEL,
+            font,
+            text_color,
+        );
+        let caret_cx = rect.left() + TRIGGER_PAD_X + galley.size().x + CARET_GAP + CARET_W / 2.0;
+        paint_down_caret(painter, egui::pos2(caret_cx, rect.center().y), text_color);
+    }
+
+    response
+}
+
+fn paint_down_caret(painter: &egui::Painter, center: egui::Pos2, color: egui::Color32) {
+    let hw = CARET_W / 2.0;
+    let hh = CARET_H / 2.0;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(center.x - hw, center.y - hh),
+            egui::pos2(center.x + hw, center.y - hh),
+            egui::pos2(center.x, center.y + hh),
+        ],
+        color,
+        egui::Stroke::NONE,
+    ));
 }
