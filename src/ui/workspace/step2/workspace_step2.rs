@@ -11,7 +11,11 @@ use crate::ui::shared::redesign_tokens::{
 };
 use crate::ui::shared::tab_open_seam::paint_active_tab_seam_cover;
 use crate::ui::step2::action_step2::Step2Action;
-use crate::ui::workspace::step2::{step2_log_confirm, step2_search, step2_tab_row};
+use crate::ui::workspace::step_action_dispatch;
+use crate::ui::workspace::step2::{
+    step2_global_mods_confirm, step2_log_confirm, step2_rescan_reconcile, step2_search,
+    step2_tab_row,
+};
 
 const TITLE_H: f32 = 24.0;
 const TITLE_GAP: f32 = 8.0;
@@ -27,7 +31,6 @@ const CONTENT_MIN_H: f32 = 160.0;
 
 pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<Step2Action> {
     let palette = orchestrator.theme_palette;
-    let dev_mode = orchestrator.dev_mode;
 
     crate::ui::step2::state_step2::normalize_active_tab(&mut orchestrator.wizard_state);
 
@@ -36,7 +39,7 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<S
 
     render_title(ui, palette, rects.title);
 
-    if let Some(a) = step2_search::render(ui, orchestrator, palette, rects.search, dev_mode) {
+    if let Some(a) = step2_search::render(ui, orchestrator, palette, rects.search) {
         action = Some(a);
     }
 
@@ -91,6 +94,9 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<S
     let ctx = ui.ctx().clone();
     render_popups(ui, orchestrator, &ctx, &mut action, palette);
     if let Some(a) = render_weidu_log_confirm(orchestrator, &ctx) {
+        action = Some(a);
+    }
+    if let Some(a) = render_global_mods_scan_confirm(orchestrator, &ctx) {
         action = Some(a);
     }
 
@@ -264,6 +270,37 @@ fn render_weidu_log_confirm(
         }
         ConfirmOutcome::Cancelled => {
             orchestrator.workspace_view.step2.pending_weidu_log_confirm = None;
+            None
+        }
+        ConfirmOutcome::Pending => None,
+    }
+}
+
+fn render_global_mods_scan_confirm(
+    orchestrator: &mut OrchestratorApp,
+    ctx: &egui::Context,
+) -> Option<Step2Action> {
+    orchestrator.workspace_view.step2.pending_global_mods_scan?;
+
+    let dialog = step2_global_mods_confirm::global_mods_scan_confirm();
+    let outcome = confirm_dialog::render(ctx, orchestrator.theme_palette, &dialog);
+
+    match outcome {
+        ConfirmOutcome::Confirmed => {
+            orchestrator.workspace_view.step2.pending_global_mods_scan = None;
+            let settings_mods_folder = orchestrator
+                .settings_store
+                .load()
+                .ok()
+                .map(|s| s.step1.mods_folder)
+                .unwrap_or_default();
+            orchestrator.wizard_state.step1.mods_folder = settings_mods_folder;
+            step2_rescan_reconcile::snapshot_current_selection(orchestrator);
+            step_action_dispatch::dispatch_step2(Step2Action::StartScan, orchestrator);
+            None
+        }
+        ConfirmOutcome::Cancelled => {
+            orchestrator.workspace_view.step2.pending_global_mods_scan = None;
             None
         }
         ConfirmOutcome::Pending => None,
