@@ -219,7 +219,7 @@ fn apply_update_check_outcome(
     }
 }
 
-const fn reproduce_exact_gate(state: &WizardState) -> bool {
+pub(super) const fn reproduce_exact_gate(state: &WizardState) -> bool {
     state.modlist_auto_build_active && state.reproduce_exact
 }
 
