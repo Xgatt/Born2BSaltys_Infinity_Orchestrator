@@ -7,10 +7,9 @@ use crate::ui::orchestrator::widgets::dialogs::confirm_dialog::{ConfirmDialog, C
 pub const fn global_mods_scan_confirm<'a>() -> ConfirmDialog<'a> {
     ConfirmDialog {
         id_salt: "step2_global_mods_scan",
-        title: "Scan the global mods folder?",
-        body: "The mods and versions in your Settings > Paths \u{201C}Mods folder\u{201D} \
-               may not match this installation folder. Any selected components not present \
-               there will be dropped from your selection.",
+        title: "Rescan with a different mods source?",
+        body: "Rescanning with a different mods source can drop selected components \
+               not present in the new source.",
         confirm_label: "Scan anyway",
         danger: false,
     }
@@ -18,7 +17,7 @@ pub const fn global_mods_scan_confirm<'a>() -> ConfirmDialog<'a> {
 
 #[must_use]
 pub const fn global_mods_scan_dialog_title() -> &'static str {
-    "Scan the global mods folder?"
+    "Rescan with a different mods source?"
 }
 
 #[must_use]
@@ -48,7 +47,7 @@ mod tests {
         assert!(!d.danger);
         assert_eq!(d.confirm_label, "Scan anyway");
         assert_eq!(d.id_salt, "step2_global_mods_scan");
-        assert_eq!(d.title, "Scan the global mods folder?");
+        assert_eq!(d.title, "Rescan with a different mods source?");
     }
 
     #[test]

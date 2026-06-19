@@ -280,6 +280,8 @@ fn render_global_mods_scan_confirm(
     orchestrator: &mut OrchestratorApp,
     ctx: &egui::Context,
 ) -> Option<Step2Action> {
+    use crate::registry::workspace_model::ModsSource;
+
     orchestrator.workspace_view.step2.pending_global_mods_scan?;
 
     let dialog = step2_global_mods_confirm::global_mods_scan_confirm();
@@ -288,14 +290,30 @@ fn render_global_mods_scan_confirm(
     match outcome {
         ConfirmOutcome::Confirmed => {
             orchestrator.workspace_view.step2.pending_global_mods_scan = None;
-            let settings_mods_folder = orchestrator
-                .settings_store
-                .load()
-                .ok()
-                .map(|s| s.step1.mods_folder)
-                .unwrap_or_default();
-            orchestrator.wizard_state.step1.mods_folder = settings_mods_folder;
+            let modlist_id = orchestrator.workspace_view.modlist_id.trim().to_string();
+            let current_source = orchestrator
+                .workspace_state
+                .get(modlist_id.as_str())
+                .map_or_else(ModsSource::default, |w| w.mods_source);
+            let folder = match current_source {
+                ModsSource::GlobalModsFolder => orchestrator
+                    .settings_store
+                    .load()
+                    .ok()
+                    .map(|s| s.step1.mods_folder)
+                    .unwrap_or_default(),
+                ModsSource::InstallationFolder => orchestrator
+                    .workspace_state
+                    .get(modlist_id.as_str())
+                    .and_then(|w| w.scratch_mods_folder.clone())
+                    .unwrap_or_default(),
+            };
+            orchestrator.wizard_state.step1.mods_folder = folder;
             step2_rescan_reconcile::snapshot_current_selection(orchestrator);
+            if let Some(workspace) = orchestrator.workspace_state.get_mut(modlist_id.as_str()) {
+                workspace.last_rescanned_mods_source = current_source;
+            }
+            orchestrator.mark_workspace_dirty();
             step_action_dispatch::dispatch_step2(Step2Action::StartScan, orchestrator);
             None
         }

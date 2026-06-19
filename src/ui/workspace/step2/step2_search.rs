@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::registry::workspace_model::ModsSource;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::orchestrator::widgets::{BtnOpts, InputOpts, redesign_btn, redesign_text_input};
 use crate::ui::shared::redesign_tokens::{
@@ -16,10 +17,9 @@ const SEARCH_INPUT_H: f32 = 30.0;
 const ROW_GAP: f32 = 10.0;
 const SEARCH_INPUT_TEXT_PAD: i8 = 8;
 const DROPDOWN_MIN_W: f32 = 160.0;
-const TRIGGER_LABEL: &str = "Rescan Mods";
-const TRIGGER_PAD_X: f32 = 10.0;
-const TRIGGER_PAD_Y: f32 = 4.0;
-const TRIGGER_FONT_SIZE: f32 = 12.0;
+const SOURCE_SELECTOR_PAD_X: f32 = 10.0;
+const SOURCE_SELECTOR_PAD_Y: f32 = 4.0;
+const SOURCE_SELECTOR_FONT_SIZE: f32 = 12.0;
 const CARET_GAP: f32 = 7.0;
 const CARET_W: f32 = 9.0;
 const CARET_H: f32 = 5.0;
@@ -31,6 +31,42 @@ const RESCAN_DISABLED_TIP: &str = "Available after install prep (Phase 7) \u{201
 const GLOBAL_MODS_DISABLED_TIP: &str =
     "No mods folder configured. Set it in Settings > Paths > Mods folder.";
 
+const FORK_GLOBAL_DISABLED_TIP: &str = "Only available when creating from extracted mods.";
+
+struct RowParams {
+    is_fork: bool,
+    current_source: ModsSource,
+    global_mods_folder: String,
+    global_non_empty: bool,
+    scratch_enabled: bool,
+    modlist_id: String,
+}
+
+impl RowParams {
+    fn from_orchestrator(orchestrator: &OrchestratorApp) -> Self {
+        let modlist_id = orchestrator.workspace_view.modlist_id.trim().to_string();
+        let current_source = orchestrator
+            .workspace_state
+            .get(modlist_id.as_str())
+            .map_or_else(ModsSource::default, |w| w.mods_source);
+        let global_mods_folder = orchestrator
+            .settings_store
+            .load()
+            .ok()
+            .map(|s| s.step1.mods_folder)
+            .unwrap_or_default();
+        let global_non_empty = !global_mods_folder.trim().is_empty();
+        Self {
+            is_fork: orchestrator.workspace_view.fork_meta.is_some(),
+            current_source,
+            global_mods_folder,
+            global_non_empty,
+            scratch_enabled: scratch_scan_enabled(orchestrator),
+            modlist_id,
+        }
+    }
+}
+
 pub fn render(
     ui: &mut egui::Ui,
     orchestrator: &mut OrchestratorApp,
@@ -38,27 +74,32 @@ pub fn render(
     rect: egui::Rect,
 ) -> Option<Step2Action> {
     let is_scanning = orchestrator.wizard_state.step2.is_scanning;
-    let scratch_scan_enabled = scratch_scan_enabled(orchestrator);
-    let global_mods_folder = orchestrator
-        .settings_store
-        .load()
-        .ok()
-        .map(|s| s.step1.mods_folder)
-        .unwrap_or_default();
-    let global_enabled = !global_mods_folder.trim().is_empty();
+    let params = RowParams::from_orchestrator(orchestrator);
+    render_row(ui, orchestrator, palette, rect, is_scanning, &params)
+}
 
+fn render_row(
+    ui: &mut egui::Ui,
+    orchestrator: &mut OrchestratorApp,
+    palette: ThemePalette,
+    rect: egui::Rect,
+    is_scanning: bool,
+    params: &RowParams,
+) -> Option<Step2Action> {
     let mut action: Option<Step2Action> = None;
 
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
 
-            let trigger_w = if is_scanning {
-                small_btn_width(ui, "Cancel Scan")
+            let btn_label = if is_scanning {
+                "Cancel Scan"
             } else {
-                rescan_trigger_width(ui)
+                "Rescan Mods"
             };
-            let search_w = (rect.width() - trigger_w - ROW_GAP).max(80.0);
+            let btn_w = small_btn_width(ui, btn_label);
+            let sel_w = source_selector_width(ui, params.current_source);
+            let search_w = (rect.width() - sel_w - ROW_GAP - btn_w - ROW_GAP).max(80.0);
 
             let search_margin = egui::Margin::symmetric(SEARCH_INPUT_TEXT_PAD, 4);
             let _resp = redesign_text_input(
@@ -82,51 +123,32 @@ pub fn render(
                 },
             );
 
-            if is_scanning {
-                if redesign_btn(
-                    ui,
-                    palette,
-                    "Cancel Scan",
-                    BtnOpts {
-                        small: true,
-                        ..Default::default()
-                    },
-                )
-                .on_hover_text("Stop the running scan and return to idle.")
-                .clicked()
+            let trigger = source_selector_trigger(ui, palette, params.current_source);
+            let popup_id = ui.make_persistent_id("step2_mods_source_selector");
+            if trigger.clicked() {
+                ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+            }
+            if let Some(new_source) = source_selector_dropdown(
+                ui,
+                palette,
+                popup_id,
+                &trigger,
+                params.is_fork,
+                params.global_non_empty,
+            ) {
+                if let Some(ws) = orchestrator
+                    .workspace_state
+                    .get_mut(params.modlist_id.as_str())
                 {
-                    action = Some(Step2Action::CancelScan);
+                    ws.mods_source = new_source;
                 }
-            } else {
-                let trigger = rescan_trigger(ui, palette);
-                let popup_id = ui.make_persistent_id("step2_rescan_mods_dropdown");
-                if trigger.clicked() {
-                    ui.memory_mut(|mem| mem.toggle_popup(popup_id));
-                }
-                let chosen = rescan_dropdown(
-                    ui,
-                    palette,
-                    popup_id,
-                    &trigger,
-                    scratch_scan_enabled,
-                    global_enabled,
-                );
-                match chosen {
-                    DropdownChoice::InstallationFolder => {
-                        let scratch = orchestrator
-                            .workspace_state
-                            .get(orchestrator.workspace_view.modlist_id.trim())
-                            .and_then(|w| w.scratch_mods_folder.clone())
-                            .unwrap_or_default();
-                        orchestrator.wizard_state.step1.mods_folder = scratch;
-                        step2_rescan_reconcile::snapshot_current_selection(orchestrator);
-                        action = Some(Step2Action::StartScan);
-                    }
-                    DropdownChoice::GlobalModsFolder => {
-                        orchestrator.workspace_view.step2.pending_global_mods_scan = Some(());
-                    }
-                    DropdownChoice::None => {}
-                }
+                orchestrator.wizard_state.step1.mods_folder =
+                    source_folder(new_source, &params.global_mods_folder, orchestrator);
+                orchestrator.mark_workspace_dirty();
+            }
+
+            if let Some(a) = render_scan_btn(ui, orchestrator, palette, is_scanning, params) {
+                action = Some(a);
             }
         });
     });
@@ -134,23 +156,131 @@ pub fn render(
     action
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DropdownChoice {
-    None,
-    InstallationFolder,
-    GlobalModsFolder,
+fn render_scan_btn(
+    ui: &mut egui::Ui,
+    orchestrator: &mut OrchestratorApp,
+    palette: ThemePalette,
+    is_scanning: bool,
+    params: &RowParams,
+) -> Option<Step2Action> {
+    if is_scanning {
+        return redesign_btn(
+            ui,
+            palette,
+            "Cancel Scan",
+            BtnOpts {
+                small: true,
+                ..Default::default()
+            },
+        )
+        .on_hover_text("Stop the running scan and return to idle.")
+        .clicked()
+        .then_some(Step2Action::CancelScan);
+    }
+
+    let enabled = rescan_btn_enabled(
+        params.current_source,
+        params.scratch_enabled,
+        params.is_fork,
+        params.global_non_empty,
+    );
+    let resp = redesign_btn(
+        ui,
+        palette,
+        "Rescan Mods",
+        BtnOpts {
+            small: true,
+            disabled: !enabled,
+            ..Default::default()
+        },
+    );
+    let resp = if enabled {
+        resp
+    } else {
+        resp.on_hover_text(rescan_disabled_tip(params.current_source, params.is_fork))
+    };
+
+    if !resp.clicked() {
+        return None;
+    }
+
+    let last_rescanned = orchestrator
+        .workspace_state
+        .get(params.modlist_id.as_str())
+        .map_or_else(ModsSource::default, |w| w.last_rescanned_mods_source);
+    if needs_source_change_warning(params.current_source, last_rescanned) {
+        orchestrator.workspace_view.step2.pending_global_mods_scan = Some(());
+        return None;
+    }
+
+    orchestrator.wizard_state.step1.mods_folder = source_folder(
+        params.current_source,
+        &params.global_mods_folder,
+        orchestrator,
+    );
+    step2_rescan_reconcile::snapshot_current_selection(orchestrator);
+    if let Some(ws) = orchestrator
+        .workspace_state
+        .get_mut(params.modlist_id.as_str())
+    {
+        ws.last_rescanned_mods_source = params.current_source;
+    }
+    orchestrator.mark_workspace_dirty();
+    Some(Step2Action::StartScan)
 }
 
-fn rescan_dropdown(
+const fn rescan_btn_enabled(
+    source: ModsSource,
+    scratch_enabled: bool,
+    is_fork: bool,
+    global_non_empty: bool,
+) -> bool {
+    match source {
+        ModsSource::InstallationFolder => scratch_enabled,
+        ModsSource::GlobalModsFolder => !global_item_disabled(is_fork, global_non_empty),
+    }
+}
+
+const fn rescan_disabled_tip(source: ModsSource, is_fork: bool) -> &'static str {
+    match source {
+        ModsSource::InstallationFolder => RESCAN_DISABLED_TIP,
+        ModsSource::GlobalModsFolder if is_fork => FORK_GLOBAL_DISABLED_TIP,
+        ModsSource::GlobalModsFolder => GLOBAL_MODS_DISABLED_TIP,
+    }
+}
+
+fn source_folder(
+    source: ModsSource,
+    global_mods_folder: &str,
+    orchestrator: &OrchestratorApp,
+) -> String {
+    match source {
+        ModsSource::GlobalModsFolder => global_mods_folder.to_string(),
+        ModsSource::InstallationFolder => orchestrator
+            .workspace_state
+            .get(orchestrator.workspace_view.modlist_id.trim())
+            .and_then(|w| w.scratch_mods_folder.clone())
+            .unwrap_or_default(),
+    }
+}
+
+const fn source_label(source: ModsSource) -> &'static str {
+    match source {
+        ModsSource::InstallationFolder => "Installation Folder",
+        ModsSource::GlobalModsFolder => "Global Mods Folder",
+    }
+}
+
+fn source_selector_dropdown(
     ui: &egui::Ui,
     palette: ThemePalette,
     popup_id: egui::Id,
     trigger: &egui::Response,
-    scratch_enabled: bool,
-    global_enabled: bool,
-) -> DropdownChoice {
+    is_fork: bool,
+    global_settings_non_empty: bool,
+) -> Option<ModsSource> {
     if !ui.memory(|mem| mem.is_popup_open(popup_id)) {
-        return DropdownChoice::None;
+        return None;
     }
 
     let mut pos = trigger.rect.right_bottom();
@@ -167,7 +297,6 @@ fn rescan_dropdown(
             frame
                 .show(inner_ui, |inner_ui| {
                     inner_ui.set_max_width(DROPDOWN_MIN_W);
-
                     let chassis = egui::Frame::default()
                         .fill(redesign_shell_bg(palette))
                         .stroke(egui::Stroke::new(
@@ -176,43 +305,15 @@ fn rescan_dropdown(
                         ))
                         .corner_radius(egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8))
                         .inner_margin(egui::Margin::same(4));
-
                     chassis
                         .show(inner_ui, |inner_ui| {
                             inner_ui.spacing_mut().item_spacing.y = 0.0;
-                            let mut choice = DropdownChoice::None;
-
-                            let inst_clicked = dropdown_item(
+                            build_source_menu_items(
                                 inner_ui,
                                 palette,
-                                "Installation folder",
-                                scratch_enabled,
-                                if scratch_enabled {
-                                    None
-                                } else {
-                                    Some(RESCAN_DISABLED_TIP)
-                                },
-                            );
-                            if inst_clicked {
-                                choice = DropdownChoice::InstallationFolder;
-                            }
-
-                            let global_clicked = dropdown_item(
-                                inner_ui,
-                                palette,
-                                "Global mods folder",
-                                global_enabled,
-                                if global_enabled {
-                                    None
-                                } else {
-                                    Some(GLOBAL_MODS_DISABLED_TIP)
-                                },
-                            );
-                            if global_clicked {
-                                choice = DropdownChoice::GlobalModsFolder;
-                            }
-
-                            choice
+                                is_fork,
+                                global_settings_non_empty,
+                            )
                         })
                         .inner
                 })
@@ -224,11 +325,50 @@ fn rescan_dropdown(
         ui.memory_mut(egui::Memory::close_popup);
     }
 
-    let choice = area_resp.inner;
-    if choice != DropdownChoice::None {
+    let chosen = area_resp.inner;
+    if chosen.is_some() {
         ui.memory_mut(egui::Memory::close_popup);
     }
-    choice
+    chosen
+}
+
+fn build_source_menu_items(
+    ui: &mut egui::Ui,
+    palette: ThemePalette,
+    is_fork: bool,
+    global_settings_non_empty: bool,
+) -> Option<ModsSource> {
+    let global_enabled = !global_item_disabled(is_fork, global_settings_non_empty);
+    let global_tip = if is_fork {
+        Some(FORK_GLOBAL_DISABLED_TIP)
+    } else if !global_settings_non_empty {
+        Some(GLOBAL_MODS_DISABLED_TIP)
+    } else {
+        None
+    };
+
+    let inst_clicked = dropdown_item(
+        ui,
+        palette,
+        source_label(ModsSource::InstallationFolder),
+        true,
+        None,
+    );
+    let global_clicked = dropdown_item(
+        ui,
+        palette,
+        source_label(ModsSource::GlobalModsFolder),
+        global_enabled,
+        global_tip,
+    );
+
+    if inst_clicked {
+        Some(ModsSource::InstallationFolder)
+    } else if global_clicked {
+        Some(ModsSource::GlobalModsFolder)
+    } else {
+        None
+    }
 }
 
 fn dropdown_item(
@@ -312,32 +452,36 @@ fn small_btn_width(ui: &egui::Ui, label: &str) -> f32 {
     10.0_f32.mul_add(2.0, galley.size().x)
 }
 
-fn trigger_font() -> egui::FontId {
+fn selector_font() -> egui::FontId {
     egui::FontId::new(
-        TRIGGER_FONT_SIZE,
+        SOURCE_SELECTOR_FONT_SIZE,
         egui::FontFamily::Name("poppins_medium".into()),
     )
 }
 
-fn rescan_trigger_width(ui: &egui::Ui) -> f32 {
-    let galley = ui.painter().layout_no_wrap(
-        TRIGGER_LABEL.to_string(),
-        trigger_font(),
-        egui::Color32::WHITE,
-    );
-    TRIGGER_PAD_X.mul_add(2.0, galley.size().x) + CARET_GAP + CARET_W
+fn source_selector_width(ui: &egui::Ui, source: ModsSource) -> f32 {
+    let label = source_label(source);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_string(), selector_font(), egui::Color32::WHITE);
+    SOURCE_SELECTOR_PAD_X.mul_add(2.0, galley.size().x) + CARET_GAP + CARET_W
 }
 
-fn rescan_trigger(ui: &mut egui::Ui, palette: ThemePalette) -> egui::Response {
+fn source_selector_trigger(
+    ui: &mut egui::Ui,
+    palette: ThemePalette,
+    source: ModsSource,
+) -> egui::Response {
+    let label = source_label(source);
     let text_color = redesign_text_primary(palette);
-    let font = trigger_font();
+    let font = selector_font();
     let galley = ui
         .painter()
-        .layout_no_wrap(TRIGGER_LABEL.to_string(), font.clone(), text_color);
+        .layout_no_wrap(label.to_string(), font.clone(), text_color);
     let content_w = galley.size().x + CARET_GAP + CARET_W;
     let size = egui::vec2(
-        TRIGGER_PAD_X.mul_add(2.0, content_w),
-        TRIGGER_PAD_Y.mul_add(2.0, galley.size().y),
+        SOURCE_SELECTOR_PAD_X.mul_add(2.0, content_w),
+        SOURCE_SELECTOR_PAD_Y.mul_add(2.0, galley.size().y),
     );
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let rect = if response.is_pointer_button_down_on() {
@@ -357,13 +501,14 @@ fn rescan_trigger(ui: &mut egui::Ui, palette: ThemePalette) -> egui::Response {
             egui::StrokeKind::Inside,
         );
         painter.text(
-            egui::pos2(rect.left() + TRIGGER_PAD_X, rect.center().y),
+            egui::pos2(rect.left() + SOURCE_SELECTOR_PAD_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            TRIGGER_LABEL,
+            label,
             font,
             text_color,
         );
-        let caret_cx = rect.left() + TRIGGER_PAD_X + galley.size().x + CARET_GAP + CARET_W / 2.0;
+        let caret_cx =
+            rect.left() + SOURCE_SELECTOR_PAD_X + galley.size().x + CARET_GAP + CARET_W / 2.0;
         paint_down_caret(painter, egui::pos2(caret_cx, rect.center().y), text_color);
     }
 
@@ -382,4 +527,68 @@ fn paint_down_caret(painter: &egui::Painter, center: egui::Pos2, color: egui::Co
         color,
         egui::Stroke::NONE,
     ));
+}
+
+#[must_use]
+pub(crate) const fn needs_source_change_warning(
+    current: ModsSource,
+    last_rescanned: ModsSource,
+) -> bool {
+    !matches!(
+        (current, last_rescanned),
+        (
+            ModsSource::InstallationFolder,
+            ModsSource::InstallationFolder
+        ) | (ModsSource::GlobalModsFolder, ModsSource::GlobalModsFolder)
+    )
+}
+
+#[must_use]
+pub(crate) const fn global_item_disabled(is_fork: bool, global_settings_non_empty: bool) -> bool {
+    is_fork || !global_settings_non_empty
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_source_does_not_need_warning() {
+        assert!(!needs_source_change_warning(
+            ModsSource::InstallationFolder,
+            ModsSource::InstallationFolder
+        ));
+        assert!(!needs_source_change_warning(
+            ModsSource::GlobalModsFolder,
+            ModsSource::GlobalModsFolder
+        ));
+    }
+
+    #[test]
+    fn different_source_needs_warning() {
+        assert!(needs_source_change_warning(
+            ModsSource::GlobalModsFolder,
+            ModsSource::InstallationFolder
+        ));
+        assert!(needs_source_change_warning(
+            ModsSource::InstallationFolder,
+            ModsSource::GlobalModsFolder
+        ));
+    }
+
+    #[test]
+    fn fork_disables_global_item() {
+        assert!(global_item_disabled(true, true));
+        assert!(global_item_disabled(true, false));
+    }
+
+    #[test]
+    fn non_fork_empty_settings_disables_global_item() {
+        assert!(global_item_disabled(false, false));
+    }
+
+    #[test]
+    fn non_fork_with_settings_enables_global_item() {
+        assert!(!global_item_disabled(false, true));
+    }
 }
