@@ -29,7 +29,7 @@ const RESCAN_DISABLED_TIP: &str = "Available after install prep (Phase 7) \u{201
      Use \u{201C}Global mods folder\u{201D} to scan your configured mods folder in the meantime.";
 
 const GLOBAL_MODS_DISABLED_TIP: &str =
-    "No mods folder configured. Set it in Settings \u{2192} Paths \u{2192} Mods folder.";
+    "No mods folder configured. Set it in Settings > Paths > Mods folder.";
 
 pub fn render(
     ui: &mut egui::Ui,

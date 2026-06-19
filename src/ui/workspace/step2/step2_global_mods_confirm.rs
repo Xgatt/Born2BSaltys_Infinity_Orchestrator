@@ -8,7 +8,7 @@ pub const fn global_mods_scan_confirm<'a>() -> ConfirmDialog<'a> {
     ConfirmDialog {
         id_salt: "step2_global_mods_scan",
         title: "Scan the global mods folder?",
-        body: "The mods and versions in your Settings \u{2192} Paths \u{201C}Mods folder\u{201D} \
+        body: "The mods and versions in your Settings > Paths \u{201C}Mods folder\u{201D} \
                may not match this installation folder. Any selected components not present \
                there will be dropped from your selection.",
         confirm_label: "Scan anyway",
