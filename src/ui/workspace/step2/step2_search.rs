@@ -8,7 +8,7 @@ use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::orchestrator::widgets::{BtnOpts, InputOpts, redesign_btn, redesign_text_input};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_strong,
-    redesign_input_bg, redesign_shell_bg, redesign_text_primary,
+    redesign_input_bg, redesign_shell_bg, redesign_text_muted, redesign_text_primary,
 };
 use crate::ui::step2::action_step2::Step2Action;
 use crate::ui::workspace::step2::step2_rescan_reconcile;
@@ -23,6 +23,7 @@ const SOURCE_SELECTOR_FONT_SIZE: f32 = 12.0;
 const CARET_GAP: f32 = 7.0;
 const CARET_W: f32 = 9.0;
 const CARET_H: f32 = 5.0;
+const MODS_SOURCE_LABEL: &str = "Mods Source:";
 
 const RESCAN_DISABLED_TIP: &str = "Available after install prep (Phase 7) \u{2014} \
      the mods folder is extracted per-install at prep time (SPEC \u{00A7}13.12a). \
@@ -99,7 +100,9 @@ fn render_row(
             };
             let btn_w = small_btn_width(ui, btn_label);
             let sel_w = source_selector_width(ui, params.current_source);
-            let search_w = (rect.width() - sel_w - ROW_GAP - btn_w - ROW_GAP).max(80.0);
+            let label_w = mods_source_label_width(ui);
+            let search_w =
+                (rect.width() - label_w - ROW_GAP - sel_w - ROW_GAP - btn_w - ROW_GAP).max(80.0);
 
             let search_margin = egui::Margin::symmetric(SEARCH_INPUT_TEXT_PAD, 4);
             let _resp = redesign_text_input(
@@ -123,6 +126,7 @@ fn render_row(
                 },
             );
 
+            render_mods_source_label(ui, palette);
             let trigger = source_selector_trigger(ui, palette, params.current_source);
             let popup_id = ui.make_persistent_id("step2_mods_source_selector");
             if trigger.clicked() {
@@ -465,6 +469,39 @@ fn source_selector_width(ui: &egui::Ui, source: ModsSource) -> f32 {
         ui.painter()
             .layout_no_wrap(label.to_string(), selector_font(), egui::Color32::WHITE);
     SOURCE_SELECTOR_PAD_X.mul_add(2.0, galley.size().x) + CARET_GAP + CARET_W
+}
+
+fn mods_source_label_width(ui: &egui::Ui) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            MODS_SOURCE_LABEL.to_string(),
+            selector_font(),
+            egui::Color32::WHITE,
+        )
+        .size()
+        .x
+}
+
+fn render_mods_source_label(ui: &mut egui::Ui, palette: ThemePalette) {
+    let font = selector_font();
+    let color = redesign_text_muted(palette);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(MODS_SOURCE_LABEL.to_string(), font.clone(), color);
+    let size = egui::vec2(
+        galley.size().x,
+        SOURCE_SELECTOR_PAD_Y.mul_add(2.0, galley.size().y),
+    );
+    let (rect, _resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter().text(
+            egui::pos2(rect.left(), rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            MODS_SOURCE_LABEL,
+            font,
+            color,
+        );
+    }
 }
 
 fn source_selector_trigger(
