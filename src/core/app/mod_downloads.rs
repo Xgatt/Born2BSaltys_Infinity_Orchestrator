@@ -1905,6 +1905,19 @@ mod tests {
         }
     }
 
+    fn base_source_with_channel(channel: &str) -> ModDownloadSource {
+        ModDownloadSource {
+            name: "TestMod".to_string(),
+            tp2: "testmod".to_string(),
+            source_id: "main".to_string(),
+            source_label: "Main".to_string(),
+            url: "https://github.com/Test/Mod".to_string(),
+            github: Some("Test/Mod".to_string()),
+            channel: Some(channel.to_string()),
+            ..Default::default()
+        }
+    }
+
     fn overlay_with_branch(branch: &str) -> ModDownloadSourceOverlay {
         ModDownloadSourceOverlay {
             tp2: Some("testmod".to_string()),
@@ -1974,6 +1987,27 @@ mod tests {
         );
         assert!(source.commit.is_none(), "global commit must be cleared");
         assert!(source.branch.is_none(), "branch must remain clear");
+    }
+
+    #[test]
+    fn per_modlist_tag_replaces_global_channel() {
+        let mut source = base_source_with_channel("release");
+        let overlay = overlay_with_tag("v1.2.0");
+
+        if overlay_has_version_selector(&overlay) {
+            clear_source_version_selectors(&mut source);
+        }
+        apply_source_overlay(&mut source, overlay);
+        normalize_source(&mut source);
+
+        assert_eq!(
+            source.tag.as_deref(),
+            Some("v1.2.0"),
+            "per-modlist tag=v1.2.0 must win"
+        );
+        assert!(source.channel.is_none(), "global channel must be cleared");
+        assert!(source.branch.is_none(), "branch must remain clear");
+        assert!(source.commit.is_none(), "commit must remain clear");
     }
 
     #[test]

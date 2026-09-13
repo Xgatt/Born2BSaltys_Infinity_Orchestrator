@@ -26,6 +26,7 @@ pub struct GalleryEntry {
     pub requirements: &'static str,
     pub version: &'static str,
     pub mods: &'static [GalleryMod],
+    pub source_overrides: Option<&'static str>,
 }
 
 impl GalleryEntry {
@@ -52,6 +53,8 @@ const REQUIREMENTS_BGEE_SOD: &str =
     "Baldur's Gate: Enhanced Edition with the Siege of Dragonspear DLC";
 const REQUIREMENTS_BG2EE: &str = "Baldur's Gate II: Enhanced Edition";
 const REQUIREMENTS_IWDEE: &str = "Icewind Dale: Enhanced Edition";
+const REQUIREMENTS_EET_WINDOWS: &str =
+    "Baldur's Gate: Enhanced Edition and Baldur's Gate II: Enhanced Edition, Windows only (EEex)";
 
 #[must_use]
 pub(crate) const fn requirements_for(game: Game) -> &'static str {
@@ -65,17 +68,62 @@ pub(crate) const fn requirements_for(game: Game) -> &'static str {
 
 const EET_BG1_FOLDER_PROMPT: &str = r"y,C:\BIO\Baldur's Gate Enhanced Edition";
 
+const EET_ESSENTIALS_SOURCE_OVERRIDES: &str = r#"[[mods]]
+tp2 = "cdtweaks"
+
+  [[mods.sources]]
+  id = "gibberlings3"
+  label = "Gibberlings3"
+  type = "github"
+  url = "https://github.com/Gibberlings3/Tweaks-Anthology"
+  repo = "Gibberlings3/Tweaks-Anthology"
+  branch = "master"
+
+[[mods]]
+tp2 = "eeex"
+
+  [[mods.sources]]
+  id = "bubb13"
+  label = "Bubb13"
+  type = "github"
+  url = "https://github.com/Bubb13/EEex"
+  repo = "Bubb13/EEex"
+  tag = "v1.2.0"
+
+[[mods]]
+tp2 = "bubb_spell_menu_extended"
+
+  [[mods.sources]]
+  id = "bubb13"
+  label = "Bubb13"
+  type = "github"
+  url = "https://github.com/Bubb13/Bubbs-Spell-Menu-Extended"
+  repo = "Bubb13/Bubbs-Spell-Menu-Extended"
+  tag = "v5.2"
+
+[[mods]]
+tp2 = "EET_Tweaks"
+
+  [[mods.sources]]
+  id = "k4thos"
+  label = "K4thos"
+  type = "github"
+  url = "https://github.com/K4thos/EET_Tweaks"
+  repo = "K4thos/EET_Tweaks"
+  tag = "v1.12"
+"#;
+
 const ENTRIES: &[GalleryEntry] = &[
     GalleryEntry {
         id: "eet-essentials",
         name: "EET Essentials",
         author: BIO_TEAM,
         game: Game::EET,
-        tags: &["Starter", "Core setup"],
+        tags: &["Starter", "Vanilla+", "Quality of life"],
         starter: true,
         sample: true,
-        description: "The minimum EET spine: merge the campaigns, then bridge Baldur's Gate into Shadows of Amn so one save carries the whole saga.",
-        requirements: REQUIREMENTS_EET,
+        description: "The EET spine with the rough edges filed off: merge the campaigns, bridge Baldur's Gate into Shadows of Amn, then the community fixpack, EEex, a cleaner UI, the graphical overhaul, Icewind Dale's spells and a light pass of quality-of-life tweaks that never reshape the saga.",
+        requirements: REQUIREMENTS_EET_WINDOWS,
         version: "1.0.0",
         mods: &[
             GalleryMod {
@@ -87,12 +135,652 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
             GalleryMod {
+                mod_name: "EEFixPack",
+                tp_file: "SETUP-EEFIXPACK.TP2",
+                component_id: "0",
+                component_label: "Core Fixes",
+                target: Game::BGEE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEFixPack",
+                tp_file: "SETUP-EEFIXPACK.TP2",
+                component_id: "2",
+                component_label: "Game Text Update",
+                target: Game::BGEE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEFixPack",
+                tp_file: "SETUP-EEFIXPACK.TP2",
+                component_id: "0",
+                component_label: "Core Fixes",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEFixPack",
+                tp_file: "SETUP-EEFIXPACK.TP2",
+                component_id: "2",
+                component_label: "Game Text Update",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
                 mod_name: "EET",
                 tp_file: "EET.TP2",
                 component_id: "0",
                 component_label: "EET core (resource importation)",
                 target: Game::BG2EE,
                 wlb_inputs: Some(EET_BG1_FOLDER_PROMPT),
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "0",
+                component_label: "Quick Menu Core",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "1",
+                component_label: "EEex",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "2",
+                component_label: "Enable effect menu module: LShift-on-hover to view spells affecting creature",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "3",
+                component_label: "Enable empty container module: Highlight empty containers in gray instead of cyan",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "4",
+                component_label: "Enable hotkey module: Edit override/B3Hotkey.lua to create advanced spell hotkeys",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "5",
+                component_label: "Enable scale module: Customizable UI scaling factor",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "6",
+                component_label: "Enable time step module: Advance 1 game tick on keypress",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEex",
+                tp_file: "EEEX.TP2",
+                component_id: "7",
+                component_label: "Enable timer module: Visual indicators for modal actions, contingencies, and spell/item cooldowns",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "LeUI",
+                tp_file: "LEUI.TP2",
+                component_id: "0",
+                component_label: "lefreut's Enhanced UI - Core component",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEUITweaks",
+                tp_file: "EEUITWEAKS.TP2",
+                component_id: "1070",
+                component_label: "Faydark's Abilities Auto-Roller/GrimLefourbe's BG2 UI",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EEUITweaks",
+                tp_file: "EEUITWEAKS.TP2",
+                component_id: "1100",
+                component_label: "Display max proficiency limits",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "bubb_spell_menu_extended",
+                tp_file: "BUBB_SPELL_MENU_EXTENDED.TP2",
+                component_id: "0",
+                component_label: "Bubb's Spell Menu Extended",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "BGGO",
+                tp_file: "BGGO.TP2",
+                component_id: "0",
+                component_label: "Baldurs Gate Graphical Overhaul Core",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HQ_SoundClips_BG2EE",
+                tp_file: "HQ_SOUNDCLIPS_BG2EE.TP2",
+                component_id: "0",
+                component_label: "Install high quality soundclips for new BG2EE content",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "IWDification",
+                tp_file: "SETUP-IWDIFICATION.TP2",
+                component_id: "10",
+                component_label: "Icewind Dale Casting Graphics (Andyr)",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "IWDification",
+                tp_file: "SETUP-IWDIFICATION.TP2",
+                component_id: "30",
+                component_label: "IWD Arcane Spell Pack",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "IWDification",
+                tp_file: "SETUP-IWDIFICATION.TP2",
+                component_id: "40",
+                component_label: "IWD Divine Spell Pack",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "130",
+                component_label: "Force All Dialogue to Pause Game",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "140",
+                component_label: "Fix Boo's Squeak",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "170",
+                component_label: "Unique Icons [Lava] -> Only replace icons that aren't already unique",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "182",
+                component_label: "Unique Containers [Miloch] -> Unique icons and names",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "191",
+                component_label: "Use Character Colors Instead of Item Colors -> For non-magical shields and helmets",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "250",
+                component_label: "Colorize NPC Names and Tooltips -> Normal brightness",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "1075",
+                component_label: "Send BioWare NPCs to an Inn [DavidW/Zed Nocear]",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "1080",
+                component_label: "Add Bags of Holding",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "1120",
+                component_label: "Stores Sell Higher Stacks of Items",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "2780",
+                component_label: "P&P Free Action",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "2999",
+                component_label: "Max HP at Level One",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3000",
+                component_label: "Higher HP on Level Up -> Maximum",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3010",
+                component_label: "Maximum HP Creatures [the bigg] -> For all creatures in game",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3030",
+                component_label: "Easy Spell Learning -> 100% learn spells",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3040",
+                component_label: "Make Bags of Holding Bottomless",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3080",
+                component_label: "Increase Ammo Stack Size -> Unlimited ammo stacking",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3090",
+                component_label: "Increase Jewelry, Gem, and Miscellaneous Item Stacks -> Unlimited jewelry, gem, and miscellaneous item stacking",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3100",
+                component_label: "Increase Potion Stacking -> Unlimited potion stacking",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3110",
+                component_label: "Increase Scroll Stacking -> Unlimited scroll stacking",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "3354",
+                component_label: "Create Interval Saves [argent77] -> Every 15 minutes (cycle through four saves)",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4000",
+                component_label: "Adjust Evil Joinable NPC Reaction Rolls",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4025",
+                component_label: "Allow NPC Pairs to Separate",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4031",
+                component_label: "Consistent Stats: Edwin -> Use BG2 values",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4041",
+                component_label: "Consistent Stats: Jaheira -> Use BG2 values",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4050",
+                component_label: "Change Jaheira to Neutral Good Alignment",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4061",
+                component_label: "Consistent Stats: Minsc -> Use BG2 values",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4071",
+                component_label: "Consistent Stats: Viconia -> Use BG2 values",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4150",
+                component_label: "Move Boo Into Minsc's Pack",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "CDTweaks",
+                tp_file: "SETUP-CDTWEAKS.TP2",
+                component_id: "4170",
+                component_label: "Ensure Shar-Teel Doesn't Die in the Original Challenge",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "10",
+                component_label: "Add in-game option \"Enable Debug Mode\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "12",
+                component_label: "Add in-game option \"Show Strrefs\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "13",
+                component_label: "Add in-game option \"Hotkeys On Tooltips\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "33",
+                component_label: "Add in-game option \"Enhanced Path Search\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "14",
+                component_label: "Add in-game option \"Show trigger icons on tab\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "16",
+                component_label: "Add in-game option \"Limit druidic spells for Cleric/Ranger\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "17",
+                component_label: "Add in-game option \"3E Sneak Attack\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "18",
+                component_label: "Add in-game option \"Critical Hit Screen Shake\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "19",
+                component_label: "Add in-game option \"Show extra combat info\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "20",
+                component_label: "Add in-game option \"Show Game Date and Time on Pause\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "23",
+                component_label: "Add in-game option \"Pause Game on Map Screen\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "25",
+                component_label: "Add in-game option \"Disable Movies\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "27",
+                component_label: "Add in-game option \"XP Bonus in Nightmare Mode\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "32",
+                component_label: "Add in-game option \"Show Area of Effect Range\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "35",
+                component_label: "Add in-game option \"Show Learnable Spells\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "36",
+                component_label: "Add in-game option \"Render Search Map\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "37",
+                component_label: "Add in-game option \"Render Dynamic Search Map\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "38",
+                component_label: "Add in-game options for Tweak Anthology's \"Create Interval Saves\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "39",
+                component_label: "Add in-game option \"Force Dialog Pause\"",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "HiddenGameplayOptions",
+                tp_file: "HIDDENGAMEPLAYOPTIONS.TP2",
+                component_id: "200",
+                component_label: "Improved Cheat Menu",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "remastered_spell_icons",
+                tp_file: "REMASTERED_SPELL_ICONS.TP2",
+                component_id: "0",
+                component_label: "Install Remastered Spell Icons Core Component",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "remastered_spell_icons",
+                tp_file: "REMASTERED_SPELL_ICONS.TP2",
+                component_id: "1",
+                component_label: "Use IWD:EE Colors (Green icons for summoning spells)",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "2042",
+                component_label: "XP for Traps, Spells and Lockpicking -> Vanilla friendly progressive",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "3000",
+                component_label: "Disable hostile reaction after charm",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "3022",
+                component_label: "Familiar death consequences -> Disabled",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "4020",
+                component_label: "Higher framerates support",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "4040",
+                component_label: "Import party items to SoA",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "4050",
+                component_label: "Books/Scrolls categorization",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "4060",
+                component_label: "Wand Case",
+                target: Game::BG2EE,
+                wlb_inputs: None,
+            },
+            GalleryMod {
+                mod_name: "EET_Tweaks",
+                tp_file: "EET_TWEAKS.TP2",
+                component_id: "4070",
+                component_label: "Key Ring",
+                target: Game::BG2EE,
+                wlb_inputs: None,
             },
             GalleryMod {
                 mod_name: "EET_end",
@@ -103,6 +791,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
+        source_overrides: Some(EET_ESSENTIALS_SOURCE_OVERRIDES),
     },
     GalleryEntry {
         id: "eet-plus-fixes",
@@ -173,6 +862,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
+        source_overrides: None,
     },
     GalleryEntry {
         id: "bgee-vanilla-plus",
@@ -219,6 +909,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
+        source_overrides: None,
     },
     GalleryEntry {
         id: "bgee-vanilla-plus-no-dlc",
@@ -249,6 +940,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
+        source_overrides: None,
     },
     GalleryEntry {
         id: "iwdee-essentials",
@@ -269,6 +961,7 @@ const ENTRIES: &[GalleryEntry] = &[
             target: Game::IWDEE,
             wlb_inputs: None,
         }],
+        source_overrides: None,
     },
 ];
 
@@ -281,7 +974,13 @@ pub fn share_code(entry: &GalleryEntry) -> Result<String, String> {
     let mut state = export_state_for(entry);
     state.modlist_share_name = Some(entry.name.to_string());
     state.modlist_share_author = Some(entry.author.to_string());
-    export_modlist_share_code_with(&state, &ShareExportSources::default())
+    export_modlist_share_code_with(
+        &state,
+        &ShareExportSources {
+            mod_downloads_user: entry.source_overrides.map(str::to_string),
+            mod_installed_refs: None,
+        },
+    )
 }
 
 fn export_state_for(entry: &GalleryEntry) -> WizardState {
@@ -342,7 +1041,7 @@ mod tests {
         assert_eq!(by_id("eet-plus-fixes").mod_count(), 4);
         assert_eq!(by_id("bgee-vanilla-plus").mod_count(), 3);
         assert_eq!(by_id("bgee-vanilla-plus-no-dlc").mod_count(), 1);
-        assert_eq!(by_id("eet-essentials").mod_count(), 3);
+        assert_eq!(by_id("eet-essentials").mod_count(), 15);
         assert_eq!(by_id("iwdee-essentials").mod_count(), 1);
     }
 
@@ -404,26 +1103,27 @@ mod tests {
     }
 
     #[test]
-    fn eet_essentials_splits_one_bgee_and_two_bg2ee_entries() {
+    fn eet_essentials_splits_three_bgee_and_eighty_bg2ee_entries() {
         let entry = entries()
             .iter()
             .find(|e| e.id == "eet-essentials")
             .expect("EET Essentials is in the catalog");
         let code = share_code(entry).expect("export");
         let preview = preview_modlist_share_code(&code).expect("parse");
-        assert_eq!(preview.bgee_entries, 1);
-        assert_eq!(preview.bg2ee_entries, 2);
+        assert_eq!(preview.bgee_entries, 3);
+        assert_eq!(preview.bg2ee_entries, 80);
     }
 
     #[test]
-    fn stub_codes_carry_no_source_overrides_or_installed_refs() {
+    fn only_eet_essentials_carries_source_overrides_and_no_entry_carries_installed_refs() {
         for entry in entries() {
             let code = share_code(entry).expect("catalog entry must export a share code");
             let preview =
                 preview_modlist_share_code(&code).expect("generated code must parse back");
-            assert!(
-                !preview.has_source_overrides,
-                "{} must carry no source overrides",
+            assert_eq!(
+                preview.has_source_overrides,
+                entry.id == "eet-essentials",
+                "{} has_source_overrides mismatch",
                 entry.name
             );
             assert!(
@@ -436,6 +1136,175 @@ mod tests {
                 "{} must carry no mod configs",
                 entry.name
             );
+        }
+    }
+
+    const EXPECTED_PINS: [(&str, &str, &str, &str, &str); 4] = [
+        (
+            "cdtweaks",
+            "gibberlings3",
+            "Gibberlings3",
+            "branch",
+            "master",
+        ),
+        ("eeex", "bubb13", "Bubb13", "tag", "v1.2.0"),
+        (
+            "bubb_spell_menu_extended",
+            "bubb13",
+            "Bubb13",
+            "tag",
+            "v5.2",
+        ),
+        ("EET_Tweaks", "k4thos", "K4thos", "tag", "v1.12"),
+    ];
+
+    #[test]
+    fn eet_essentials_pins_replace_the_stock_sources_through_the_overlay_merge() {
+        use crate::app::mod_downloads::{SourceTier, source_tiers_from_texts};
+
+        let tiers = source_tiers_from_texts(
+            include_str!("../../../core/config/default_mod_downloads.toml"),
+            "",
+            EET_ESSENTIALS_SOURCE_OVERRIDES,
+        );
+        for (tp2, id, label, selector_key, selector_value) in EXPECTED_PINS {
+            let (source, tier) = tiers.resolve(tp2).expect("pinned mod resolves");
+            assert_eq!(
+                tier,
+                SourceTier::Modlist,
+                "{tp2} must resolve from the modlist"
+            );
+            assert_eq!(source.source_id, id);
+            assert_eq!(source.source_label, label);
+            assert!(source.channel.is_none(), "{tp2} must not keep a channel");
+            let (pinned, other) = if selector_key == "tag" {
+                (&source.tag, &source.branch)
+            } else {
+                (&source.branch, &source.tag)
+            };
+            assert_eq!(pinned.as_deref(), Some(selector_value));
+            assert!(other.is_none(), "{tp2} must carry one selector");
+        }
+    }
+
+    #[test]
+    fn eet_essentials_overrides_pin_exactly_four_sources() {
+        let parsed: toml::Value =
+            toml::from_str(EET_ESSENTIALS_SOURCE_OVERRIDES).expect("override toml parses");
+        let mods = parsed
+            .get("mods")
+            .and_then(toml::Value::as_array)
+            .expect("mods array");
+        assert_eq!(mods.len(), EXPECTED_PINS.len());
+        for (mod_entry, (tp2, id, label, selector_key, selector_value)) in
+            mods.iter().zip(EXPECTED_PINS)
+        {
+            assert_eq!(
+                mod_entry.get("tp2").and_then(toml::Value::as_str),
+                Some(tp2)
+            );
+            let sources = mod_entry
+                .get("sources")
+                .and_then(toml::Value::as_array)
+                .expect("sources array");
+            assert_eq!(sources.len(), 1);
+            let source = &sources[0];
+            assert_eq!(source.get("id").and_then(toml::Value::as_str), Some(id));
+            assert_eq!(
+                source.get("label").and_then(toml::Value::as_str),
+                Some(label)
+            );
+            assert_eq!(
+                source.get("type").and_then(toml::Value::as_str),
+                Some("github")
+            );
+            assert!(
+                source
+                    .get("url")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|url| !url.is_empty())
+            );
+            assert!(
+                source
+                    .get("repo")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|repo| !repo.is_empty())
+            );
+            assert_eq!(
+                source.get(selector_key).and_then(toml::Value::as_str),
+                Some(selector_value)
+            );
+            let other_key = if selector_key == "tag" {
+                "branch"
+            } else {
+                "tag"
+            };
+            assert!(source.get(other_key).is_none());
+            assert!(source.get("commit").is_none());
+            assert!(source.get("channel").is_none());
+            assert!(source.get("asset").is_none());
+        }
+    }
+
+    #[test]
+    fn eet_essentials_order_holds_the_reference_spine() {
+        let entry = entries()
+            .iter()
+            .find(|e| e.id == "eet-essentials")
+            .expect("EET Essentials is in the catalog");
+        let first_game_mods: Vec<&GalleryMod> = entry
+            .mods
+            .iter()
+            .filter(|m| m.target == Game::BGEE)
+            .collect();
+        let second_game_mods: Vec<&GalleryMod> = entry
+            .mods
+            .iter()
+            .filter(|m| m.target == Game::BG2EE)
+            .collect();
+
+        let bgee_keys: Vec<(&str, &str)> = first_game_mods
+            .iter()
+            .map(|m| (m.mod_name, m.component_id))
+            .collect();
+        assert_eq!(
+            bgee_keys,
+            vec![("DlcMerger", "1"), ("EEFixPack", "0"), ("EEFixPack", "2")]
+        );
+
+        let first_bg2ee: Vec<(&str, &str)> = second_game_mods[..3]
+            .iter()
+            .map(|m| (m.mod_name, m.component_id))
+            .collect();
+        assert_eq!(
+            first_bg2ee,
+            vec![("EEFixPack", "0"), ("EEFixPack", "2"), ("EET", "0")]
+        );
+        let last_bg2ee = second_game_mods.last().expect("bg2ee mods non-empty");
+        assert_eq!(last_bg2ee.mod_name, "EET_end");
+        assert_eq!(last_bg2ee.component_id, "0");
+
+        let eeex_ids: Vec<&str> = second_game_mods
+            .iter()
+            .filter(|m| m.mod_name == "EEex")
+            .map(|m| m.component_id)
+            .collect();
+        assert_eq!(eeex_ids, vec!["0", "1", "2", "3", "4", "5", "6", "7"]);
+
+        for mods in [&first_game_mods, &second_game_mods] {
+            let mut seen_runs: Vec<(&str, &str)> = Vec::new();
+            let mut previous: Option<(&str, &str)> = None;
+            for gallery_mod in mods {
+                let key = (gallery_mod.mod_name, gallery_mod.tp_file);
+                if previous != Some(key) {
+                    assert!(
+                        !seen_runs.contains(&key),
+                        "{key:?} appears in two separate runs"
+                    );
+                    seen_runs.push(key);
+                }
+                previous = Some(key);
+            }
         }
     }
 

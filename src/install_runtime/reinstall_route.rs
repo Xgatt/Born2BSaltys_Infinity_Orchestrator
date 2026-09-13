@@ -150,6 +150,7 @@ mod tests {
                 target: Game::BGEE,
                 wlb_inputs: None,
             }],
+            source_overrides: None,
         };
 
         let source =
