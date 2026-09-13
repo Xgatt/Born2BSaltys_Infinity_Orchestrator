@@ -45,6 +45,7 @@ impl Component {
         let details = tail.next().unwrap_or_default().trim();
         let (names_text, version) = details
             .rsplit_once(':')
+            .filter(|(_, version)| looks_like_version_tail(version))
             .map(|(names, version)| (names.trim_end(), version.trim().to_string()))
             .unwrap_or((details, String::new()));
         let mut names = names_text.split("->");
@@ -80,6 +81,27 @@ impl Component {
     }
 }
 
+fn looks_like_version_tail(tail: &str) -> bool {
+    let trimmed = tail.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.contains("->") || trimmed.contains('(') || trimmed.contains(')') {
+        return false;
+    }
+    let words: Vec<&str> = trimmed.split_whitespace().collect();
+    match words.as_slice() {
+        [word] => {
+            word.bytes().any(|b| b.is_ascii_digit())
+                || word
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || matches!(c, '.' | '-' | '_'))
+        }
+        [_, _] => trimmed.bytes().any(|b| b.is_ascii_digit()),
+        _ => false,
+    }
+}
+
 fn extract_wlb_inputs(line: &str) -> Option<String> {
     let marker = "@wlb-inputs:";
     let lower = line.to_ascii_lowercase();
@@ -94,7 +116,7 @@ fn extract_wlb_inputs(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::Component;
+    use super::{Component, looks_like_version_tail};
 
     #[test]
     fn parse_windows_line() {
@@ -169,5 +191,105 @@ mod tests {
         let line = r"~EET\EET.TP2~ #0 #0 // EET core: v14.0 // @wlb-inputs: y,D:\test1";
         let c = Component::parse_weidu_line(line).expect("parse should succeed");
         assert_eq!(c.wlb_inputs.as_deref(), Some("y,D:\\test1"));
+    }
+
+    #[test]
+    fn version_tail_rule_accepts_the_reference_corpus() {
+        let accept = [
+            "1.6.9",
+            "30",
+            "1.02",
+            "35.21",
+            "v18",
+            "v1.3.10-alpha",
+            "v0.4.1-alpha",
+            "V 2.4",
+            "Alpha 3",
+            "devel",
+        ];
+        for tail in accept {
+            assert!(looks_like_version_tail(tail), "expected accept: {tail}");
+        }
+    }
+
+    #[test]
+    fn version_tail_rule_rejects_label_tails() {
+        let reject = [
+            "Items",
+            "Inspirations",
+            "EE",
+            "EE)",
+            "Main Component",
+            "Troubadour Kit",
+            "Skald Overhaul",
+            "Not-So-Indestructible Rats",
+            "Enhanced Edition",
+            "Race Text Patch",
+            "-> Artificer (Bard, EEex required)",
+            "3e Alignment for Bards (any non-lawful)",
+            "Edwin -> Use BG2 values",
+            "EE Colors (Green icons for summoning spells)",
+            "LShift-on-hover to view spells affecting creature",
+        ];
+        for tail in reject {
+            assert!(!looks_like_version_tail(tail), "expected reject: {tail}");
+        }
+    }
+
+    #[test]
+    fn parse_line_without_version_keeps_a_colon_inside_the_label() {
+        let line = r"~EEex\EEEX.TP2~ #0 #2 // Enable effect menu module: LShift-on-hover to view spells affecting creature";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(
+            c.component_name,
+            "Enable effect menu module: LShift-on-hover to view spells affecting creature"
+        );
+        assert_eq!(c.version, "");
+    }
+
+    #[test]
+    fn parse_line_without_version_keeps_a_colon_and_a_subcomponent() {
+        let line =
+            r"~CDTweaks\SETUP-CDTWEAKS.TP2~ #0 #4031 // Consistent Stats: Edwin -> Use BG2 values";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(c.component_name, "Consistent Stats: Edwin");
+        assert_eq!(c.sub_component, "Use BG2 values");
+        assert_eq!(c.version, "");
+    }
+
+    #[test]
+    fn parse_line_with_game_suffix_and_no_version() {
+        let line =
+            r"~HOUSETWEAKS\HOUSETWEAKS.TP2~ #0 #14 // House Tweaks: Improved Dialogues (BG:EE)";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(c.component_name, "House Tweaks: Improved Dialogues (BG:EE)");
+        assert_eq!(c.version, "");
+    }
+
+    #[test]
+    fn parse_line_with_two_word_version() {
+        let line = r"~EEFIXPACK\SETUP-EEFIXPACK.TP2~ #0 #0 // Core Fixes: Alpha 3";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(c.component_name, "Core Fixes");
+        assert_eq!(c.version, "Alpha 3");
+    }
+
+    #[test]
+    fn parse_line_with_devel_version() {
+        let line = r"~EEEX\EEEX.TP2~ #0 #2 // Enable effect menu module: LShift-on-hover to view spells affecting creature: devel";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(
+            c.component_name,
+            "Enable effect menu module: LShift-on-hover to view spells affecting creature"
+        );
+        assert_eq!(c.version, "devel");
+    }
+
+    #[test]
+    fn parse_line_with_single_word_label_tail() {
+        let line = r"~BARDICWONDERS\SETUP-BARDICWONDERS.TP2~ #0 #1 // Bardic Wonders: Items";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(c.component_name, "Bardic Wonders: Items");
+        assert_eq!(c.version, "");
     }
 }
