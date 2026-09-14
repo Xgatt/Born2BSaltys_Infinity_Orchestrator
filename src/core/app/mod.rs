@@ -110,6 +110,7 @@ pub mod scan;
 pub mod selected_details;
 pub mod selection_jump;
 pub mod selection_refs;
+pub mod source_check;
 pub mod state;
 #[path = "state/state_convert.rs"]
 pub mod state_convert;

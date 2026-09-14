@@ -1447,6 +1447,7 @@ pub fn reset_install_pipeline_state(set: InstallPipelineResetSet<'_>) {
 
 pub(crate) fn source_probe_deferred(debounce: &HashMap<&'static str, Instant>) -> bool {
     debounce.contains_key(crate::ui::settings::validate_now::FIELD_BGEE_GAME_FOLDER)
+        || debounce.contains_key(crate::ui::settings::validate_now::FIELD_EET_BGEE_GAME_FOLDER)
 }
 
 fn refresh_source_compatibility(app: &mut OrchestratorApp) {
@@ -1697,6 +1698,13 @@ mod tests {
             Instant::now(),
         );
         assert!(!source_probe_deferred(&with_other_field));
+
+        let mut with_eet_bgee_source = HashMap::new();
+        with_eet_bgee_source.insert(
+            crate::ui::settings::validate_now::FIELD_EET_BGEE_GAME_FOLDER,
+            Instant::now(),
+        );
+        assert!(source_probe_deferred(&with_eet_bgee_source));
     }
 
     #[test]

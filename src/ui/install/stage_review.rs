@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::app::compat_dlc_source::{SourceNotice, SourceNoticeSeverity, SourceRemedy};
 use crate::app::modlist_share::ModlistSharePreview;
 use crate::registry::model::ModlistRegistry;
 use crate::registry::operations::{DestinationOwnership, classify_destination};
@@ -12,8 +13,9 @@ use crate::ui::orchestrator::widgets::{
     BtnOpts, InputOpts, redesign_btn, redesign_section_header, redesign_text_input,
 };
 use crate::ui::shared::redesign_tokens::{
-    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_soft,
-    redesign_input_bg, redesign_text_faint, redesign_text_muted, redesign_text_primary,
+    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_accent,
+    redesign_border_soft, redesign_input_bg, redesign_text_faint, redesign_text_muted,
+    redesign_text_primary, redesign_with_alpha,
 };
 
 pub(crate) const FALLBACK_NAME: &str = "Shared modlist";
@@ -128,8 +130,16 @@ pub(crate) fn destination_checks(
 }
 
 #[must_use]
+pub(crate) fn source_notice_blocks(state: &InstallScreenState) -> bool {
+    state
+        .source_compat_issue
+        .as_ref()
+        .is_some_and(|notice| notice.severity == SourceNoticeSeverity::Warning)
+}
+
+#[must_use]
 pub(crate) fn begin_disabled_for(state: &InstallScreenState, checks: &DestinationChecks) -> bool {
-    (state.source_compat_issue.is_some() && !state.review.modify)
+    (source_notice_blocks(state) && !state.review.modify)
         || begin_disabled(&BeginGuards {
             name: &state.review.name,
             code: &state.import_code,
@@ -214,10 +224,11 @@ pub(crate) fn render_install_settings(
     divider(ui, palette);
     ui.add_space(16.0);
 
-    if let Some(issue) = state.source_compat_issue {
-        render_source_warning(
+    if let Some(notice) = state.source_compat_issue.clone() {
+        render_source_notice(
             ui,
-            issue,
+            palette,
+            &notice,
             source_warning_action(locked, state.review.modify),
         );
         ui.add_space(16.0);
@@ -293,22 +304,57 @@ pub(crate) const fn source_warning_action(locked: bool, modify_on: bool) -> Sour
     }
 }
 
-const SOURCE_WARNING_TITLE: &str = "DLC Merger required";
+const SOURCE_WARNING_TITLE_ORDER_MERGER: &str = "DLC Merger required";
+const SOURCE_WARNING_TITLE_CHANGE_SOURCE: &str = "BGEE source mismatch";
 const SOURCE_WARNING_ACTION_REINSTALL: &str = "This list cannot be reinstalled as provided. Use Create to make a modified copy with DLC Merger first in the BGEE installation order.";
 const SOURCE_WARNING_ACTION_CHOOSE_MODIFY: &str = "Choose \"Yes, review and modify\" when you install, then put DLC Merger first in the BGEE installation order.";
 const SOURCE_WARNING_ACTION_MODIFY_ON: &str =
     "Once the workspace opens, put DLC Merger first in the BGEE installation order.";
+const SOURCE_WARNING_ACTION_REINSTALL_CHANGE_SOURCE: &str = "This list cannot be reinstalled against this BGEE source. Point Settings at a source that matches the list, then reinstall.";
+const SOURCE_WARNING_ACTION_CHOOSE_MODIFY_CHANGE_SOURCE: &str = "Choose \"Yes, review and modify\" to remove DLC Merger, or point Settings at a BGEE source that matches the list.";
+const SOURCE_WARNING_ACTION_MODIFY_ON_CHANGE_SOURCE: &str = "Once the workspace opens, remove DLC Merger, or point Settings at a BGEE source that matches the list.";
 
 #[must_use]
-pub(crate) const fn source_warning_action_copy(action: SourceWarningAction) -> &'static str {
-    match action {
-        SourceWarningAction::Reinstall => SOURCE_WARNING_ACTION_REINSTALL,
-        SourceWarningAction::ChooseModify => SOURCE_WARNING_ACTION_CHOOSE_MODIFY,
-        SourceWarningAction::ModifyOn => SOURCE_WARNING_ACTION_MODIFY_ON,
+pub(crate) const fn source_warning_title(remedy: SourceRemedy) -> &'static str {
+    match remedy {
+        SourceRemedy::OrderMerger => SOURCE_WARNING_TITLE_ORDER_MERGER,
+        SourceRemedy::ChangeSource => SOURCE_WARNING_TITLE_CHANGE_SOURCE,
     }
 }
 
-pub(crate) fn render_source_warning(ui: &mut egui::Ui, issue: &str, action: SourceWarningAction) {
+#[must_use]
+pub(crate) const fn source_warning_action_text(
+    action: SourceWarningAction,
+    remedy: SourceRemedy,
+) -> &'static str {
+    match (remedy, action) {
+        (SourceRemedy::OrderMerger, SourceWarningAction::Reinstall) => {
+            SOURCE_WARNING_ACTION_REINSTALL
+        }
+        (SourceRemedy::OrderMerger, SourceWarningAction::ChooseModify) => {
+            SOURCE_WARNING_ACTION_CHOOSE_MODIFY
+        }
+        (SourceRemedy::OrderMerger, SourceWarningAction::ModifyOn) => {
+            SOURCE_WARNING_ACTION_MODIFY_ON
+        }
+        (SourceRemedy::ChangeSource, SourceWarningAction::Reinstall) => {
+            SOURCE_WARNING_ACTION_REINSTALL_CHANGE_SOURCE
+        }
+        (SourceRemedy::ChangeSource, SourceWarningAction::ChooseModify) => {
+            SOURCE_WARNING_ACTION_CHOOSE_MODIFY_CHANGE_SOURCE
+        }
+        (SourceRemedy::ChangeSource, SourceWarningAction::ModifyOn) => {
+            SOURCE_WARNING_ACTION_MODIFY_ON_CHANGE_SOURCE
+        }
+    }
+}
+
+pub(crate) fn render_source_warning(
+    ui: &mut egui::Ui,
+    issue: &str,
+    action: SourceWarningAction,
+    remedy: SourceRemedy,
+) {
     let body_color = egui::Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0xCC);
     egui::Frame::default()
         .fill(destination_not_empty::warn_fill())
@@ -336,7 +382,7 @@ pub(crate) fn render_source_warning(ui: &mut egui::Ui, issue: &str, action: Sour
                     destination_not_empty::WARN_INK,
                 );
                 ui.label(
-                    egui::RichText::new(SOURCE_WARNING_TITLE)
+                    egui::RichText::new(source_warning_title(remedy))
                         .size(13.0)
                         .family(egui::FontFamily::Name("poppins_medium".into()))
                         .color(destination_not_empty::WARN_INK),
@@ -359,10 +405,47 @@ pub(crate) fn render_source_warning(ui: &mut egui::Ui, issue: &str, action: Sour
 
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(source_warning_action_copy(action))
+                    egui::RichText::new(source_warning_action_text(action, remedy))
                         .size(14.0)
                         .family(egui::FontFamily::Name("poppins_light".into()))
                         .color(body_color),
+                )
+                .wrap(),
+            );
+        });
+}
+
+pub(crate) fn render_source_notice(
+    ui: &mut egui::Ui,
+    palette: ThemePalette,
+    notice: &SourceNotice,
+    action: SourceWarningAction,
+) {
+    if notice.severity == SourceNoticeSeverity::Warning {
+        render_source_warning(ui, notice.text, action, notice.remedy);
+        return;
+    }
+    egui::Frame::default()
+        .fill(redesign_with_alpha(redesign_accent(palette), 1, 8))
+        .stroke(egui::Stroke::new(
+            REDESIGN_BORDER_WIDTH_PX,
+            redesign_accent(palette),
+        ))
+        .corner_radius(egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8))
+        .inner_margin(egui::Margin {
+            left: 14,
+            right: 14,
+            top: 10,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(notice.text)
+                        .size(14.0)
+                        .family(egui::FontFamily::Name("poppins_light".into()))
+                        .color(redesign_text_primary(palette)),
                 )
                 .wrap(),
             );
@@ -541,13 +624,24 @@ mod tests {
         state.review.name = "Test".to_string();
         state.import_code = "code".to_string();
         assert!(!begin_disabled_for(&state, &checks));
-        state.source_compat_issue = Some("DLC Merger required");
+        state.source_compat_issue = Some(SourceNotice {
+            severity: SourceNoticeSeverity::Warning,
+            text: "DLC Merger required",
+            remedy: SourceRemedy::OrderMerger,
+        });
         assert!(begin_disabled_for(&state, &checks));
         state.review.modify = true;
         assert!(!begin_disabled_for(&state, &checks));
         assert!(state.source_compat_issue.is_some());
         state.clear_preview();
         assert!(state.source_compat_issue.is_none());
+        state.source_compat_issue = Some(SourceNotice {
+            severity: SourceNoticeSeverity::Info,
+            text: "Needs Siege of Dragonspear",
+            remedy: SourceRemedy::OrderMerger,
+        });
+        state.review.modify = false;
+        assert!(!begin_disabled_for(&state, &checks));
     }
 
     fn all_good<'a>() -> BeginGuards<'a> {
@@ -765,6 +859,52 @@ mod tests {
         assert_eq!(
             source_warning_action(false, false),
             SourceWarningAction::ChooseModify
+        );
+    }
+
+    #[test]
+    fn source_warning_action_text_follows_the_remedy() {
+        assert_eq!(
+            source_warning_action_text(SourceWarningAction::Reinstall, SourceRemedy::OrderMerger),
+            SOURCE_WARNING_ACTION_REINSTALL
+        );
+        assert_eq!(
+            source_warning_action_text(
+                SourceWarningAction::ChooseModify,
+                SourceRemedy::OrderMerger
+            ),
+            SOURCE_WARNING_ACTION_CHOOSE_MODIFY
+        );
+        assert_eq!(
+            source_warning_action_text(SourceWarningAction::ModifyOn, SourceRemedy::OrderMerger),
+            SOURCE_WARNING_ACTION_MODIFY_ON
+        );
+        assert_eq!(
+            source_warning_action_text(SourceWarningAction::Reinstall, SourceRemedy::ChangeSource),
+            "This list cannot be reinstalled against this BGEE source. Point Settings at a source that matches the list, then reinstall."
+        );
+        assert_eq!(
+            source_warning_action_text(
+                SourceWarningAction::ChooseModify,
+                SourceRemedy::ChangeSource
+            ),
+            "Choose \"Yes, review and modify\" to remove DLC Merger, or point Settings at a BGEE source that matches the list."
+        );
+        assert_eq!(
+            source_warning_action_text(SourceWarningAction::ModifyOn, SourceRemedy::ChangeSource),
+            "Once the workspace opens, remove DLC Merger, or point Settings at a BGEE source that matches the list."
+        );
+    }
+
+    #[test]
+    fn source_warning_title_follows_the_remedy() {
+        assert_eq!(
+            source_warning_title(SourceRemedy::OrderMerger),
+            "DLC Merger required"
+        );
+        assert_eq!(
+            source_warning_title(SourceRemedy::ChangeSource),
+            "BGEE source mismatch"
         );
     }
 

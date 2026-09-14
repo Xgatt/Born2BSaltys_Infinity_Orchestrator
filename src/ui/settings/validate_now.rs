@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use crate::app::source_check::{self, SourceGame};
 use crate::app::state::Step1State;
 use crate::app::state_validation;
 use crate::ui::settings::state_settings::{PathStatus, ValidationReport};
@@ -106,13 +107,13 @@ fn check_path(field: &str, value: &str) -> PathStatus {
         return PathStatus::Empty;
     }
     match field_role(field) {
-        FieldRole::Game => check_game_folder(trimmed),
+        FieldRole::Game => check_game_folder(trimmed, field),
         FieldRole::Working => check_working_folder(trimmed),
         FieldRole::Binary => check_binary(trimmed),
     }
 }
 
-fn check_game_folder(value: &str) -> PathStatus {
+fn check_game_folder(value: &str, field: &str) -> PathStatus {
     let path = Path::new(value);
     if !path.exists() {
         return PathStatus::Error {
@@ -131,7 +132,31 @@ fn check_game_folder(value: &str) -> PathStatus {
             reason: "no chitin.key/lang \u{2014} not a recognizable game install".to_string(),
         };
     }
-    PathStatus::Ok { detail: None }
+    let game = match field {
+        FIELD_BGEE_GAME_FOLDER | FIELD_EET_BGEE_GAME_FOLDER => SourceGame::Bgee,
+        FIELD_BG2EE_GAME_FOLDER | FIELD_EET_BG2EE_GAME_FOLDER => SourceGame::Bg2ee,
+        _ => SourceGame::Iwdee,
+    };
+    let report = source_check::inspect(path, game);
+    let sod = report.sod.describe();
+    if report.residue.is_clean() {
+        PathStatus::Ok {
+            detail: Some(if sod.is_empty() {
+                "clean install".to_string()
+            } else {
+                format!("clean install \u{00B7} {sod}")
+            }),
+        }
+    } else {
+        let residue = report.residue.describe();
+        PathStatus::Modded {
+            detail: if sod.is_empty() {
+                residue
+            } else {
+                format!("{residue} \u{00B7} {sod}")
+            },
+        }
+    }
 }
 
 fn check_working_folder(value: &str) -> PathStatus {
@@ -197,4 +222,55 @@ pub fn resolve_on_path(name: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::{FIELD_BGEE_GAME_FOLDER, PathStatus, check_path};
+
+    struct TempFixture {
+        path: std::path::PathBuf,
+    }
+
+    impl TempFixture {
+        fn new(name: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "bio_source_check_test_validate_now_{name}_{}_{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(path.join("lang")).unwrap();
+            std::fs::write(path.join("chitin.key"), b"clean key data").unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for TempFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn modded_bgee_folder_reports_modded_status() {
+        let fixture = TempFixture::new("modded");
+        std::fs::write(fixture.path.join("WeiDU.log"), b"log").unwrap();
+        let status = check_path(FIELD_BGEE_GAME_FOLDER, &fixture.path.display().to_string());
+        assert!(matches!(status, PathStatus::Modded { .. }));
+    }
+
+    #[test]
+    fn clean_bgee_folder_reports_ok_with_sod_absent() {
+        let fixture = TempFixture::new("clean");
+        let status = check_path(FIELD_BGEE_GAME_FOLDER, &fixture.path.display().to_string());
+        assert_eq!(
+            status,
+            PathStatus::Ok {
+                detail: Some("clean install \u{00B7} SoD not found".to_string())
+            }
+        );
+    }
 }

@@ -173,7 +173,19 @@ mod tests {
         start_reinstall(&modlist, &mut app);
 
         assert_eq!(app.install_screen_state.stage, InstallStage::Details);
-        assert!(app.install_screen_state.source_compat_issue.is_some());
+        let notice = app
+            .install_screen_state
+            .source_compat_issue
+            .as_ref()
+            .expect("notice");
+        assert_eq!(
+            notice.severity,
+            crate::app::compat_dlc_source::SourceNoticeSeverity::Warning
+        );
+        assert_eq!(
+            notice.text,
+            "Your BGEE source contains DLC that needs merging. This modlist includes CDTweaks, which requires DLC Merger for this source."
+        );
 
         std::fs::remove_dir_all(&source).expect("clean up source fixture");
     }
