@@ -5,7 +5,9 @@ use eframe::egui;
 
 use crate::registry::workspace_model::ModsSource;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
-use crate::ui::orchestrator::widgets::{BtnOpts, InputOpts, redesign_btn, redesign_text_input};
+use crate::ui::orchestrator::widgets::{
+    BtnOpts, InputOpts, redesign_btn, redesign_btn_height, redesign_text_input,
+};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_strong,
     redesign_input_bg, redesign_shell_bg, redesign_text_muted, redesign_text_primary,
@@ -17,7 +19,6 @@ use crate::ui::workspace::step2::workspace_step2;
 
 const SEARCH_INPUT_H: f32 = 30.0;
 const ROW_GAP: f32 = 10.0;
-const HELP_BTN_W: f32 = 22.0;
 const HELP_HOVER: &str = "How to add mods to this modlist";
 const SEARCH_INPUT_TEXT_PAD: i8 = 8;
 const DROPDOWN_MIN_W: f32 = 160.0;
@@ -115,7 +116,8 @@ fn render_row(
             let btn_w = small_btn_width(ui, btn_label);
             let sel_w = source_selector_width(ui, params.current_source);
             let label_w = mods_source_label_width(ui);
-            let search_w = search_width(rect.width(), label_w, sel_w, btn_w);
+            let help_w = redesign_btn_height(ui, true);
+            let search_w = search_width(rect.width(), label_w, sel_w, btn_w, help_w);
 
             let search_margin = egui::Margin::symmetric(SEARCH_INPUT_TEXT_PAD, 4);
             let _resp = redesign_text_input(
@@ -169,7 +171,7 @@ fn render_row(
             }
 
             let popup_id = ui.make_persistent_id("workspace_step2_add_mods_help");
-            let help_response = help_glyph_button(ui, palette);
+            let help_response = help_glyph_button(ui, palette, help_w);
             if help_response.clicked() {
                 ui.memory_mut(|memory| memory.toggle_popup(popup_id));
             }
@@ -193,8 +195,8 @@ fn render_row(
     action
 }
 
-fn help_glyph_button(ui: &mut egui::Ui, palette: ThemePalette) -> egui::Response {
-    let size = egui::vec2(HELP_BTN_W, HELP_BTN_W);
+fn help_glyph_button(ui: &mut egui::Ui, palette: ThemePalette, edge: f32) -> egui::Response {
+    let size = egui::vec2(edge, edge);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
@@ -520,9 +522,8 @@ fn scratch_scan_enabled(orchestrator: &OrchestratorApp) -> bool {
         .is_some_and(|folder| !folder.trim().is_empty())
 }
 
-const fn search_width(row_w: f32, label_w: f32, sel_w: f32, btn_w: f32) -> f32 {
-    let width =
-        row_w - label_w - ROW_GAP - sel_w - ROW_GAP - btn_w - ROW_GAP - HELP_BTN_W - ROW_GAP;
+const fn search_width(row_w: f32, label_w: f32, sel_w: f32, btn_w: f32, help_w: f32) -> f32 {
+    let width = row_w - label_w - ROW_GAP - sel_w - ROW_GAP - btn_w - ROW_GAP - help_w - ROW_GAP;
     if width < 80.0 { 80.0 } else { width }
 }
 
@@ -669,13 +670,13 @@ mod tests {
 
     #[test]
     fn search_width_subtracts_every_fixed_widget_and_gap() {
-        let search_w = search_width(900.0, 90.0, 160.0, 100.0);
+        let search_w = search_width(900.0, 90.0, 160.0, 100.0, 22.0);
         assert!((search_w - 488.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn search_width_clamps_to_the_minimum() {
-        let search_w = search_width(300.0, 90.0, 160.0, 100.0);
+        let search_w = search_width(300.0, 90.0, 160.0, 100.0, 22.0);
         assert!((search_w - 80.0).abs() < f32::EPSILON);
     }
 
