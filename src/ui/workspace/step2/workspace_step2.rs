@@ -40,22 +40,9 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<S
     let rects = Step2LayoutRects::from_root(content_rect);
     let mut action: Option<Step2Action> = None;
 
-    let mods_folder = orchestrator
-        .wizard_state
-        .step1
-        .mods_folder
-        .trim()
-        .to_string();
     render_title(ui, palette, rects.title);
 
-    if let Some(a) = step2_search::render(
-        ui,
-        orchestrator,
-        palette,
-        rects.search,
-        &mods_folder,
-        content_rect,
-    ) {
+    if let Some(a) = step2_search::render(ui, orchestrator, palette, rects.search, content_rect) {
         action = Some(a);
     }
 
@@ -196,6 +183,7 @@ impl Step2PaneRects {
 const HELP_TITLE: &str = "Adding mods to this modlist";
 const HELP_STEP_1: &str = "1. Download any mods you want to add.";
 const HELP_STEP_2: &str = "2. Extract them to this modlist's \"mods\" folder: ";
+const HELP_STEP_2_GLOBAL: &str = "2. Extract them to your global Mods folder: ";
 const HELP_STEP_3: &str = "3. Click Rescan Mods to pick it up.";
 const HELP_OPEN_BUTTON: &str = "Open Mods folder";
 
@@ -220,6 +208,7 @@ pub(super) fn render_help_popover(
     anchor: &egui::Response,
     constrain_to: egui::Rect,
     mods_folder: &str,
+    global_source: bool,
 ) {
     let popup_id = ui.make_persistent_id("workspace_step2_add_mods_help");
     if !ui.memory(|memory| memory.is_popup_open(popup_id)) {
@@ -264,7 +253,12 @@ pub(super) fn render_help_popover(
                                 .family(egui::FontFamily::Name("poppins_light".into()))
                                 .color(redesign_text_muted(palette)),
                         );
-                        ui.label(help_step_2_job(palette, mods_folder, wrap_width));
+                        ui.label(help_step_2_job(
+                            palette,
+                            mods_folder,
+                            wrap_width,
+                            global_source,
+                        ));
                         ui.label(
                             egui::RichText::new(HELP_STEP_3)
                                 .size(12.0)
@@ -301,11 +295,20 @@ pub(super) fn render_help_popover(
     }
 }
 
-fn help_step_2_job(palette: ThemePalette, mods_folder: &str, wrap_width: f32) -> egui::WidgetText {
+fn help_step_2_job(
+    palette: ThemePalette,
+    mods_folder: &str,
+    wrap_width: f32,
+    global_source: bool,
+) -> egui::WidgetText {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = wrap_width;
     job.append(
-        HELP_STEP_2,
+        if global_source {
+            HELP_STEP_2_GLOBAL
+        } else {
+            HELP_STEP_2
+        },
         0.0,
         egui::TextFormat {
             font_id: egui::FontId::new(12.0, egui::FontFamily::Name("poppins_light".into())),

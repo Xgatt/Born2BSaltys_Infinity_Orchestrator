@@ -72,25 +72,15 @@ impl RowParams {
     }
 }
 
-struct HelpCtx<'a> {
-    mods_folder: &'a str,
-    content_rect: egui::Rect,
-}
-
 pub fn render(
     ui: &mut egui::Ui,
     orchestrator: &mut OrchestratorApp,
     palette: ThemePalette,
     rect: egui::Rect,
-    mods_folder: &str,
     content_rect: egui::Rect,
 ) -> Option<Step2Action> {
     let is_scanning = orchestrator.wizard_state.step2.is_scanning;
     let params = RowParams::from_orchestrator(orchestrator);
-    let help_ctx = HelpCtx {
-        mods_folder,
-        content_rect,
-    };
     render_row(
         ui,
         orchestrator,
@@ -98,7 +88,7 @@ pub fn render(
         rect,
         is_scanning,
         &params,
-        &help_ctx,
+        content_rect,
     )
 }
 
@@ -109,7 +99,7 @@ fn render_row(
     rect: egui::Rect,
     is_scanning: bool,
     params: &RowParams,
-    help_ctx: &HelpCtx<'_>,
+    content_rect: egui::Rect,
 ) -> Option<Step2Action> {
     let mut action: Option<Step2Action> = None;
 
@@ -184,12 +174,18 @@ fn render_row(
                 ui.memory_mut(|memory| memory.toggle_popup(popup_id));
             }
             let help_response = help_response.on_hover_text(HELP_HOVER);
+            let help_folder = source_folder(
+                params.current_source,
+                &params.global_mods_folder,
+                orchestrator,
+            );
             workspace_step2::render_help_popover(
                 ui,
                 palette,
                 &help_response,
-                help_ctx.content_rect.shrink(12.0),
-                help_ctx.mods_folder,
+                content_rect.shrink(12.0),
+                &help_folder,
+                matches!(params.current_source, ModsSource::GlobalModsFolder),
             );
         });
     });
