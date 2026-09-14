@@ -9,11 +9,10 @@ use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::nav_status::{PathValidationKind, PathValidationSummary};
 use crate::ui::orchestrator::widgets::brand_mark;
 use crate::ui::shared::redesign_tokens::{
-    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, REDESIGN_NAV_WIDTH_PX,
-    REDESIGN_SHADOW_OFFSET_BTN_PX, ThemePalette, redesign_accent, redesign_border_strong,
-    redesign_hover_overlay, redesign_pill_text, redesign_rail_bg, redesign_shadow,
-    redesign_shell_bg, redesign_status_dot, redesign_text_faint, redesign_text_muted,
-    redesign_text_primary,
+    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, REDESIGN_NAV_WIDTH_PX, ThemePalette,
+    redesign_accent, redesign_border_strong, redesign_hover_overlay, redesign_pill_text,
+    redesign_rail_bg, redesign_shell_bg, redesign_status_dot, redesign_text_faint,
+    redesign_text_muted, redesign_text_primary,
 };
 
 pub fn render(
@@ -184,11 +183,6 @@ fn render_nav_item(
     let radius = egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8);
 
     if active {
-        let shadow_rect = rect.translate(egui::vec2(
-            REDESIGN_SHADOW_OFFSET_BTN_PX,
-            REDESIGN_SHADOW_OFFSET_BTN_PX,
-        ));
-        painter.rect_filled(shadow_rect, radius, redesign_shadow(palette));
         painter.rect_filled(rect, radius, redesign_accent(palette));
         painter.rect_stroke(
             rect,

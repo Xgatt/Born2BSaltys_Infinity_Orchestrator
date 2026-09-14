@@ -6,8 +6,7 @@ use eframe::egui;
 use crate::ui::orchestrator::widgets::{BtnOpts, redesign_btn};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_strong,
-    redesign_pill_danger, redesign_shadow, redesign_shell_bg, redesign_text_muted,
-    redesign_text_primary,
+    redesign_pill_danger, redesign_shell_bg, redesign_text_muted, redesign_text_primary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -143,8 +142,6 @@ fn danger_primary_btn(ui: &mut egui::Ui, palette: ThemePalette, label: &str) -> 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let radius = egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8);
-        let shadow_rect = rect.translate(egui::vec2(2.0, 2.0));
-        painter.rect_filled(shadow_rect, radius, redesign_shadow(palette));
         painter.rect_filled(rect, radius, fill);
         painter.rect_stroke(
             rect,

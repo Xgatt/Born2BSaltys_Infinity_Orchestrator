@@ -4,9 +4,9 @@
 use eframe::egui;
 
 use crate::ui::shared::redesign_tokens::{
-    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, REDESIGN_SHADOW_OFFSET_BTN_PX,
-    ThemePalette, redesign_accent, redesign_border_strong, redesign_pill_danger, redesign_shadow,
-    redesign_shell_bg, redesign_text_primary, redesign_with_alpha,
+    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_accent,
+    redesign_border_strong, redesign_pill_danger, redesign_shell_bg, redesign_text_primary,
+    redesign_with_alpha,
 };
 
 #[must_use]
@@ -73,18 +73,6 @@ pub fn redesign_btn_glyph(
         let painter = ui.painter();
         let (alpha_num, alpha_den) = if opts.disabled { (1, 2) } else { (1, 1) };
         let radius = egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8);
-
-        if opts.danger {
-            let shadow_rect = rect.translate(egui::vec2(
-                REDESIGN_SHADOW_OFFSET_BTN_PX,
-                REDESIGN_SHADOW_OFFSET_BTN_PX,
-            ));
-            painter.rect_filled(
-                shadow_rect,
-                radius,
-                redesign_with_alpha(redesign_shadow(palette), alpha_num, alpha_den),
-            );
-        }
 
         painter.rect_filled(
             rect,
@@ -200,18 +188,6 @@ pub fn redesign_btn(
         let (alpha_num, alpha_den) = if opts.disabled { (1, 2) } else { (1, 1) };
 
         let radius = egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8);
-
-        if opts.danger {
-            let shadow_rect = rect.translate(egui::vec2(
-                REDESIGN_SHADOW_OFFSET_BTN_PX,
-                REDESIGN_SHADOW_OFFSET_BTN_PX,
-            ));
-            painter.rect_filled(
-                shadow_rect,
-                radius,
-                redesign_with_alpha(redesign_shadow(palette), alpha_num, alpha_den),
-            );
-        }
 
         painter.rect_filled(
             rect,
