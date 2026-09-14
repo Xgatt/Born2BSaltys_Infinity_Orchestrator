@@ -2,17 +2,13 @@
 // Copyright (c) 2026 Born2BSalty
 
 pub mod app_bootstrap_init;
-pub mod app_lifecycle;
 #[path = "navigation/app_nav.rs"]
 pub mod app_nav;
-#[path = "navigation/app_nav_actions.rs"]
-pub mod app_nav_actions;
 pub mod app_step1_github_oauth;
 pub mod app_step2_log;
 pub mod app_step2_router;
 pub mod app_step2_saved_log_flow;
 pub mod app_step2_scan;
-pub mod app_step2_sync_flow;
 #[path = "step2/update/app_step2_update_asset_pick.rs"]
 pub mod app_step2_update_asset_pick;
 #[path = "step2/update/app_step2_update_check.rs"]
@@ -46,8 +42,6 @@ pub mod app_step2_update_weaselmods;
 pub mod app_step3_sync_flow;
 pub mod app_step4_flow;
 pub mod app_step5_flow;
-#[path = "navigation/app_update_cycle.rs"]
-pub mod app_update_cycle;
 #[path = "compat/compat_conflict_parse.rs"]
 pub mod compat_conflict_parse;
 #[path = "compat/compat_conflict_runtime.rs"]
@@ -97,14 +91,11 @@ pub mod compat_step3_rules;
 pub mod component_block_preview;
 pub mod component_details;
 pub mod controller;
-pub mod dispatch;
-pub mod eet;
 pub mod mod_downloads;
 #[path = "step2/update/mod_update_locks.rs"]
 pub mod mod_update_locks;
 pub mod modlist_config_files;
 pub mod modlist_share;
-pub mod normal;
 #[path = "step2/update/platform_asset_target.rs"]
 pub mod platform_asset_target;
 pub mod prompt_eval_context;
@@ -116,10 +107,6 @@ pub mod prompt_popup_nav;
 pub mod prompt_popup_text;
 #[path = "step2/scan/mod.rs"]
 pub mod scan;
-#[path = "step2/scan/scan_components.rs"]
-pub mod scan_components;
-#[path = "step2/scan/scan_languages.rs"]
-pub mod scan_languages;
 pub mod selected_details;
 pub mod selection_jump;
 pub mod selection_refs;

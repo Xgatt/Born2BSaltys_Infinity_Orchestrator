@@ -6,33 +6,32 @@ use crate::app::controller::util::current_exe_fingerprint;
 use crate::app::state::Step1State;
 use crate::settings::model::AppSettings;
 use crate::settings::store::SettingsStore;
+use tracing::warn;
 
 pub(crate) struct AppBootstrap {
     pub(crate) settings_store: SettingsStore,
     pub(crate) exe_fingerprint: String,
     pub(crate) step1: Step1State,
     pub(crate) github_auth_login: String,
-    pub(crate) startup_status: Option<String>,
 }
 
 pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
-    let mut startup_warnings = Vec::<String>::new();
     if let Err(err) = crate::app::compat_rules::ensure_compat_rules_files() {
-        startup_warnings.push(format!("compat rules init failed: {err}"));
+        warn!(target = "orchestrator", "compat rules init failed: {err}");
     }
     if let Err(err) = crate::app::mod_downloads::ensure_mod_downloads_files() {
-        startup_warnings.push(format!("mod download sources init failed: {err}"));
+        warn!(
+            target = "orchestrator",
+            "mod download sources init failed: {err}"
+        );
     }
 
     let settings_store = SettingsStore::new_default();
     let exe_fingerprint = current_exe_fingerprint();
-    let loaded = match settings_store.load() {
-        Ok(value) => value,
-        Err(err) => {
-            startup_warnings.push(format!("settings load failed: {err}"));
-            AppSettings::default()
-        }
-    };
+    let loaded = settings_store.load().unwrap_or_else(|err| {
+        warn!(target = "orchestrator", "settings load failed: {err}");
+        AppSettings::default()
+    });
     let mut step1 = Step1State::from(loaded.step1);
     if step1.global_mods_folder.trim().is_empty() && !step1.mods_folder.trim().is_empty() {
         step1.global_mods_folder.clone_from(&step1.mods_folder);
@@ -45,7 +44,7 @@ pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
             Ok(Some(login)) => login,
             Ok(None) => String::new(),
             Err(err) => {
-                startup_warnings.push(format!("github auth restore failed: {err}"));
+                warn!(target = "orchestrator", "github auth restore failed: {err}");
                 String::new()
             }
         };
@@ -54,7 +53,5 @@ pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
         exe_fingerprint,
         step1,
         github_auth_login,
-        startup_status: (!startup_warnings.is_empty())
-            .then(|| format!("Startup warnings: {}", startup_warnings.join(" | "))),
     }
 }

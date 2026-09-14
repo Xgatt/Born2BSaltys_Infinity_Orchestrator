@@ -3,10 +3,6 @@
 
 #[path = "core/app/mod.rs"]
 pub mod app;
-#[path = "core/cli/mod.rs"]
-pub mod cli;
-#[path = "core/config/mod.rs"]
-pub mod config;
 #[path = "core/install/mod.rs"]
 pub mod install;
 #[path = "core/logging/mod.rs"]
