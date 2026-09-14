@@ -286,6 +286,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_line_with_version_tail_and_prompt_marker() {
+        let line = r"~EET\EET.TP2~ #0 #0 // EET core (resource importation): v14.0 // @wlb-inputs: y,C:\BIO\Baldur's Gate Enhanced Edition";
+        let c = Component::parse_weidu_line(line).expect("parse should succeed");
+        assert_eq!(c.component_name, "EET core (resource importation)");
+        assert_eq!(c.version, "v14.0");
+        assert_eq!(
+            c.wlb_inputs.as_deref(),
+            Some(r"y,C:\BIO\Baldur's Gate Enhanced Edition")
+        );
+    }
+
+    #[test]
     fn parse_line_with_single_word_label_tail() {
         let line = r"~BARDICWONDERS\SETUP-BARDICWONDERS.TP2~ #0 #1 // Bardic Wonders: Items";
         let c = Component::parse_weidu_line(line).expect("parse should succeed");

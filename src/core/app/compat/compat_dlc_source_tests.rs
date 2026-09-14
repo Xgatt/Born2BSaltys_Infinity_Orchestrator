@@ -7,12 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::app::source_check::{SodDlcState, SourceGame};
 use crate::app::state::{Step1State, Step2ComponentState, Step2ModState, Step3ItemState};
 
 use super::super::compat_step3_rules::{Step3CompatMarker, marker_key};
 use super::{
     SourceNotice, SourceNoticeSeverity, SourceRemedy, apply_step2, apply_step3, preview_issue,
-    refresh_source_check,
+    refresh_source_check, residue_issue,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -214,11 +215,12 @@ fn destination_archive_does_not_trigger_or_satisfy_source_requirement() {
     let destination = fixture();
     archive(&destination, "sod-dlc.zip");
     let mut state = source_state(&source, "EET");
+    state.bgee_game_folder.clear();
     state.eet_new_dir = destination.to_string_lossy().into_owned();
     state.eet_pre_dir.clone_from(&state.eet_new_dir);
     state.game.clone_from(&state.eet_new_dir);
     state.bg2ee_game_folder.clone_from(&state.eet_new_dir);
-    assert!(!refresh_source_check(&mut state));
+    assert!(refresh_source_check(&mut state));
     assert!(!needs_merge(&state));
     let unmerged = fixture();
     archive(&unmerged, "sod-dlc.zip");
@@ -390,7 +392,7 @@ const WARN_ABSENT_TEXT: &str = "This modlist needs Siege of Dragonspear, and you
 fn missing_notice() -> SourceNotice {
     SourceNotice {
         severity: SourceNoticeSeverity::Warning,
-        text: MISSING_TEXT,
+        text: MISSING_TEXT.to_string(),
         remedy: SourceRemedy::OrderMerger,
     }
 }
@@ -398,7 +400,7 @@ fn missing_notice() -> SourceNotice {
 fn late_notice() -> SourceNotice {
     SourceNotice {
         severity: SourceNoticeSeverity::Warning,
-        text: LATE_TEXT,
+        text: LATE_TEXT.to_string(),
         remedy: SourceRemedy::OrderMerger,
     }
 }
@@ -406,7 +408,7 @@ fn late_notice() -> SourceNotice {
 fn info_first_notice() -> SourceNotice {
     SourceNotice {
         severity: SourceNoticeSeverity::Info,
-        text: INFO_FIRST_TEXT,
+        text: INFO_FIRST_TEXT.to_string(),
         remedy: SourceRemedy::OrderMerger,
     }
 }
@@ -566,9 +568,29 @@ fn eet_preview_inspects_the_eet_bgee_folder() {
     let merged_root = fixture();
     merged_key(&merged_root);
     let mut state = source_state(&merged_root, "BGEE");
+    state.bgee_game_folder.clear();
     let eet_root = fixture();
     archive(&eet_root, "sod-dlc.zip");
     state.eet_bgee_game_folder = eet_root.to_string_lossy().into_owned();
+    assert!(refresh_source_check(&mut state));
+    let log = format!("{MERGER_FIRST_LOG}\n{TWEAKS_LOG}");
+    let notice = preview_issue(&state, &preview("EET", &log, "")).expect("info notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Info);
+    assert_eq!(notice.text, INFO_FIRST_TEXT);
+}
+
+#[test]
+fn eet_prefers_the_plain_bgee_folder_when_set() {
+    let plain_root = fixture();
+    archive(&plain_root, "sod-dlc.zip");
+    let eet_root = fixture();
+    merged_key(&eet_root);
+    let mut state = Step1State {
+        bgee_game_folder: plain_root.to_string_lossy().into_owned(),
+        eet_bgee_game_folder: eet_root.to_string_lossy().into_owned(),
+        game_install: "EET".to_string(),
+        ..Step1State::default()
+    };
     assert!(refresh_source_check(&mut state));
     let log = format!("{MERGER_FIRST_LOG}\n{TWEAKS_LOG}");
     let notice = preview_issue(&state, &preview("EET", &log, "")).expect("info notice");
@@ -624,4 +646,169 @@ fn existing_markers_win_on_both_steps() {
     let other_key = marker_key(&items[1]);
     assert_eq!(result[&other_key].kind, "missing_dep");
     assert_eq!(result[&other_key].related_mod.as_deref(), Some("dlcmerger"));
+}
+
+fn weidu_log(root: &Path) {
+    std::fs::write(root.join("WeiDU.log"), b"log").expect("write weidu log");
+}
+
+#[test]
+fn residue_issue_is_none_for_a_clean_folder() {
+    let root = fixture();
+    let mut state = Step1State {
+        bg2ee_game_folder: root.to_string_lossy().into_owned(),
+        game_install: "BG2EE".to_string(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(residue_issue(&state, "BG2EE"), None);
+}
+
+#[test]
+fn residue_issue_names_the_folder_and_findings_for_a_modded_bg2ee() {
+    let root = fixture();
+    weidu_log(&root);
+    let mut state = Step1State {
+        bg2ee_game_folder: root.to_string_lossy().into_owned(),
+        game_install: "BG2EE".to_string(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    let notice = residue_issue(&state, "BG2EE").expect("modded bg2ee notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Warning);
+    assert_eq!(notice.remedy, SourceRemedy::CleanSource);
+    let root_display = root.to_string_lossy().into_owned();
+    assert_eq!(
+        notice.text,
+        format!("Your BG2EE source at {root_display} is not a clean install: WeiDU.log.")
+    );
+}
+
+#[test]
+fn residue_issue_lists_both_eet_folders_when_both_are_modded() {
+    let first_root = fixture();
+    weidu_log(&first_root);
+    let second_root = fixture();
+    weidu_log(&second_root);
+    let mut state = Step1State {
+        eet_bgee_game_folder: first_root.to_string_lossy().into_owned(),
+        eet_bg2ee_game_folder: second_root.to_string_lossy().into_owned(),
+        game_install: "EET".to_string(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    let notice = residue_issue(&state, "EET").expect("modded eet pair notice");
+    let first_text = first_root.to_string_lossy().into_owned();
+    let second_text = second_root.to_string_lossy().into_owned();
+    assert_eq!(
+        notice.text,
+        format!(
+            "Your BGEE source at {first_text} is not a clean install: WeiDU.log. Your BG2EE source at {second_text} is not a clean install: WeiDU.log."
+        )
+    );
+}
+
+#[test]
+fn residue_issue_is_none_when_no_probe_exists() {
+    let root = fixture();
+    weidu_log(&root);
+    let state = Step1State {
+        bg2ee_game_folder: root.to_string_lossy().into_owned(),
+        game_install: "BG2EE".to_string(),
+        ..Step1State::default()
+    };
+    assert_eq!(residue_issue(&state, "BG2EE"), None);
+}
+
+#[test]
+fn refresh_probes_every_configured_game_folder() {
+    let roots: Vec<_> = (0..5).map(|_| fixture()).collect();
+    let text = |index: usize| roots[index].to_string_lossy().into_owned();
+    let mut state = Step1State {
+        bgee_game_folder: text(0),
+        eet_bgee_game_folder: text(1),
+        bg2ee_game_folder: text(2),
+        eet_bg2ee_game_folder: text(3),
+        iwdee_game_folder: text(4),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(state.dlc_source_check.probes.len(), 5);
+    state.iwdee_game_folder = String::new();
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(state.dlc_source_check.probes.len(), 4);
+}
+
+#[test]
+fn one_folder_in_two_game_rows_is_probed_once_and_stays_up_to_date() {
+    let root = fixture();
+    let mut state = Step1State {
+        bgee_game_folder: root.to_string_lossy().into_owned(),
+        bg2ee_game_folder: root.to_string_lossy().into_owned(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(state.dlc_source_check.probes.len(), 1);
+    assert!(!refresh_source_check(&mut state));
+    assert!(!refresh_source_check(&mut state));
+}
+
+#[test]
+fn role_swap_reprobes_the_folder() {
+    let first_root = fixture();
+    let second_root = fixture();
+    let first_text = first_root.to_string_lossy().into_owned();
+    let second_text = second_root.to_string_lossy().into_owned();
+    let mut state = Step1State {
+        bgee_game_folder: first_text.clone(),
+        bg2ee_game_folder: second_text.clone(),
+        game_install: "EET".to_string(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(
+        state.dlc_source_check.probes[&first_text].game,
+        SourceGame::Bgee
+    );
+    assert_eq!(
+        state.dlc_source_check.probes[&second_text].game,
+        SourceGame::Bg2ee
+    );
+
+    state.bgee_game_folder.clone_from(&second_text);
+    state.bg2ee_game_folder.clone_from(&first_text);
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(
+        state.dlc_source_check.probes[&first_text].game,
+        SourceGame::Bg2ee
+    );
+    assert_eq!(
+        state.dlc_source_check.probes[&second_text].game,
+        SourceGame::Bgee
+    );
+}
+
+#[test]
+fn same_path_first_seen_as_bg2ee_is_reprobed_when_it_becomes_bgee() {
+    let root = fixture();
+    archive(&root, "sod-dlc.zip");
+    let mut state = Step1State {
+        bg2ee_game_folder: root.to_string_lossy().into_owned(),
+        game_install: "BG2EE".to_string(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    let key = root.to_string_lossy().into_owned();
+    assert_eq!(
+        state.dlc_source_check.probes[&key].report.sod,
+        SodDlcState::NotApplicable
+    );
+
+    state.bg2ee_game_folder.clear();
+    state.bgee_game_folder = key.clone();
+    assert!(refresh_source_check(&mut state));
+    assert!(matches!(
+        state.dlc_source_check.probes[&key].report.sod,
+        SodDlcState::Unmerged { .. }
+    ));
 }

@@ -150,7 +150,30 @@ mod tests {
                 target: Game::BGEE,
                 wlb_inputs: None,
             }],
-            source_overrides: None,
+            payload: r#"{
+  "format_version": 1,
+  "bio_version": "0.3.0-alpha",
+  "game_install": "BGEE",
+  "install_mode": "build_from_scanned_mods",
+  "weidu_logs": {
+    "bgee": "~CDTweaks\\SETUP-CDTWEAKS.TP2~ #0 #2010 // Increase Ammo Stacking",
+    "bg2ee": null
+  },
+  "source_overrides": {
+    "mod_downloads_user_toml": null
+  },
+  "installed_refs": {
+    "mod_installed_refs_toml": null
+  },
+  "mod_configs": {
+    "files": []
+  },
+  "allow_auto_install": true,
+  "name": "Tweaks only",
+  "author": "Test",
+  "archive_meta": []
+}
+"#,
         };
 
         let source =

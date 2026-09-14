@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
-use crate::app::modlist_share::{ShareExportSources, export_modlist_share_code_with};
-use crate::app::state::{Step3ItemState, WizardState};
+use crate::app::modlist_share::encode_share_payload_text;
 use crate::registry::model::Game;
 
 pub struct GalleryMod {
@@ -26,7 +25,7 @@ pub struct GalleryEntry {
     pub requirements: &'static str,
     pub version: &'static str,
     pub mods: &'static [GalleryMod],
-    pub source_overrides: Option<&'static str>,
+    pub payload: &'static str,
 }
 
 impl GalleryEntry {
@@ -67,51 +66,6 @@ pub(crate) const fn requirements_for(game: Game) -> &'static str {
 }
 
 const EET_BG1_FOLDER_PROMPT: &str = r"y,C:\BIO\Baldur's Gate Enhanced Edition";
-
-const EET_ESSENTIALS_SOURCE_OVERRIDES: &str = r#"[[mods]]
-tp2 = "cdtweaks"
-
-  [[mods.sources]]
-  id = "gibberlings3"
-  label = "Gibberlings3"
-  type = "github"
-  url = "https://github.com/Gibberlings3/Tweaks-Anthology"
-  repo = "Gibberlings3/Tweaks-Anthology"
-  branch = "master"
-
-[[mods]]
-tp2 = "eeex"
-
-  [[mods.sources]]
-  id = "bubb13"
-  label = "Bubb13"
-  type = "github"
-  url = "https://github.com/Bubb13/EEex"
-  repo = "Bubb13/EEex"
-  tag = "v1.2.0"
-
-[[mods]]
-tp2 = "bubb_spell_menu_extended"
-
-  [[mods.sources]]
-  id = "bubb13"
-  label = "Bubb13"
-  type = "github"
-  url = "https://github.com/Bubb13/Bubbs-Spell-Menu-Extended"
-  repo = "Bubb13/Bubbs-Spell-Menu-Extended"
-  tag = "v5.2"
-
-[[mods]]
-tp2 = "EET_Tweaks"
-
-  [[mods.sources]]
-  id = "k4thos"
-  label = "K4thos"
-  type = "github"
-  url = "https://github.com/K4thos/EET_Tweaks"
-  repo = "K4thos/EET_Tweaks"
-  tag = "v1.12"
-"#;
 
 const ENTRIES: &[GalleryEntry] = &[
     GalleryEntry {
@@ -791,7 +745,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
-        source_overrides: Some(EET_ESSENTIALS_SOURCE_OVERRIDES),
+        payload: include_str!("catalog/eet-essentials.json"),
     },
     GalleryEntry {
         id: "eet-plus-fixes",
@@ -862,7 +816,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
-        source_overrides: None,
+        payload: include_str!("catalog/eet-plus-fixes.json"),
     },
     GalleryEntry {
         id: "bgee-vanilla-plus",
@@ -909,7 +863,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
-        source_overrides: None,
+        payload: include_str!("catalog/bgee-vanilla-plus.json"),
     },
     GalleryEntry {
         id: "bgee-vanilla-plus-no-dlc",
@@ -940,7 +894,7 @@ const ENTRIES: &[GalleryEntry] = &[
                 wlb_inputs: None,
             },
         ],
-        source_overrides: None,
+        payload: include_str!("catalog/bgee-vanilla-plus-no-dlc.json"),
     },
     GalleryEntry {
         id: "iwdee-essentials",
@@ -961,7 +915,7 @@ const ENTRIES: &[GalleryEntry] = &[
             target: Game::IWDEE,
             wlb_inputs: None,
         }],
-        source_overrides: None,
+        payload: include_str!("catalog/iwdee-essentials.json"),
     },
 ];
 
@@ -971,58 +925,7 @@ pub const fn entries() -> &'static [GalleryEntry] {
 }
 
 pub fn share_code(entry: &GalleryEntry) -> Result<String, String> {
-    let mut state = export_state_for(entry);
-    state.modlist_share_name = Some(entry.name.to_string());
-    state.modlist_share_author = Some(entry.author.to_string());
-    export_modlist_share_code_with(
-        &state,
-        &ShareExportSources {
-            mod_downloads_user: entry.source_overrides.map(str::to_string),
-            mod_installed_refs: None,
-        },
-    )
-}
-
-fn export_state_for(entry: &GalleryEntry) -> WizardState {
-    let mut state = WizardState::default();
-    state.step1.game_install = entry.game.to_legacy_string().to_string();
-    state.step1.sync_install_mode_flags();
-
-    for (index, gallery_mod) in entry.mods.iter().enumerate() {
-        let item = Step3ItemState {
-            tp_file: gallery_mod.tp_file.to_string(),
-            component_id: gallery_mod.component_id.to_string(),
-            mod_name: gallery_mod.mod_name.to_string(),
-            component_label: gallery_mod.component_label.to_string(),
-            raw_line: raw_line_for(gallery_mod),
-            prompt_summary: None,
-            prompt_events: Vec::new(),
-            selected_order: index + 1,
-            block_id: String::new(),
-            is_parent: false,
-            parent_placeholder: false,
-        };
-        if gallery_mod.target == Game::BG2EE {
-            state.step3.bg2ee_items.push(item);
-        } else {
-            state.step3.bgee_items.push(item);
-        }
-    }
-
-    state
-}
-
-fn raw_line_for(gallery_mod: &GalleryMod) -> String {
-    gallery_mod.wlb_inputs.map_or_else(String::new, |inputs| {
-        format!(
-            "~{}\\{}~ #0 #{} // {} // @wlb-inputs: {}",
-            gallery_mod.mod_name,
-            gallery_mod.tp_file,
-            gallery_mod.component_id,
-            gallery_mod.component_label,
-            inputs
-        )
-    })
+    encode_share_payload_text(entry.payload)
 }
 
 #[cfg(test)]
@@ -1115,15 +1018,14 @@ mod tests {
     }
 
     #[test]
-    fn only_eet_essentials_carries_source_overrides_and_no_entry_carries_installed_refs() {
+    fn every_entry_carries_source_overrides_and_no_installed_refs_or_mod_configs() {
         for entry in entries() {
             let code = share_code(entry).expect("catalog entry must export a share code");
             let preview =
                 preview_modlist_share_code(&code).expect("generated code must parse back");
-            assert_eq!(
+            assert!(
                 preview.has_source_overrides,
-                entry.id == "eet-essentials",
-                "{} has_source_overrides mismatch",
+                "{} must carry source overrides",
                 entry.name
             );
             assert!(
@@ -1139,111 +1041,217 @@ mod tests {
         }
     }
 
-    const EXPECTED_PINS: [(&str, &str, &str, &str, &str); 4] = [
+    const EET_ESSENTIALS_PINS: [(&str, &str, &str, &str, &str); 12] = [
         (
-            "cdtweaks",
+            "DlcMerger",
+            "commit",
+            "bfd167f7a52dfa6c9e694955a074a85991b0c358",
+            "argent77",
+            "Argent77",
+        ),
+        (
+            "eefixpack",
+            "commit",
+            "9db254fe0c046d789381de0022ff37eb2c3a3979",
             "gibberlings3",
             "Gibberlings3",
-            "branch",
-            "master",
         ),
-        ("eeex", "bubb13", "Bubb13", "tag", "v1.2.0"),
+        (
+            "eet",
+            "commit",
+            "b164f5997de7a00ef69177d8221c19bd1e34cf10",
+            "gibberlings3",
+            "Gibberlings3",
+        ),
+        (
+            "EET_END",
+            "commit",
+            "b164f5997de7a00ef69177d8221c19bd1e34cf10",
+            "gibberlings3",
+            "Gibberlings3",
+        ),
+        (
+            "cdtweaks",
+            "commit",
+            "7649ced6cd25865874d787ec1a9abbc67b068729",
+            "gibberlings3",
+            "Gibberlings3",
+        ),
+        (
+            "HiddenGameplayOptions",
+            "commit",
+            "ae8571b19d8a157b13367bfe7d379d2dfb456d75",
+            "argent77",
+            "Argent77",
+        ),
+        (
+            "HQ_SoundClips_BG2EE",
+            "commit",
+            "17b4444d8fb8fd3324648027a8119045bd6c239a",
+            "argent77",
+            "Argent77",
+        ),
+        (
+            "LeUI",
+            "commit",
+            "0e3c400ca4a85cd84933b77da0b22c6c5c322ef2",
+            "r-e-d",
+            "r-e-d",
+        ),
+        (
+            "remastered_spell_icons",
+            "commit",
+            "14d4568b326ce04e767815a61489a89c51033b76",
+            "renegade0",
+            "Renegade0",
+        ),
+        ("eeex", "tag", "v1.2.0", "bubb13", "Bubb13"),
         (
             "bubb_spell_menu_extended",
-            "bubb13",
-            "Bubb13",
             "tag",
             "v5.2",
+            "bubb13",
+            "Bubb13",
         ),
-        ("EET_Tweaks", "k4thos", "K4thos", "tag", "v1.12"),
+        ("EET_Tweaks", "tag", "v1.12", "k4thos", "K4thos"),
     ];
 
-    #[test]
-    fn eet_essentials_pins_replace_the_stock_sources_through_the_overlay_merge() {
+    fn overrides_text_for(id: &str) -> String {
+        let entry = entries()
+            .iter()
+            .find(|e| e.id == id)
+            .expect("entry is in the catalog");
+        let code = share_code(entry).expect("export");
+        preview_modlist_share_code(&code)
+            .expect("parse")
+            .source_overrides_text
+    }
+
+    fn overrides_mod_block_count(overrides: &str) -> usize {
+        toml::from_str::<toml::Value>(overrides)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("mods")
+                    .and_then(toml::Value::as_array)
+                    .map(Vec::len)
+            })
+            .unwrap_or(0)
+    }
+
+    fn assert_pins(overrides: &str, expected: &[(&str, &str, &str, &str, &str)], label: &str) {
         use crate::app::mod_downloads::{SourceTier, source_tiers_from_texts};
+
+        assert_eq!(
+            overrides_mod_block_count(overrides),
+            expected.len(),
+            "{label}: unexpected number of [[mods]] blocks in overrides"
+        );
 
         let tiers = source_tiers_from_texts(
             include_str!("../../../core/config/default_mod_downloads.toml"),
             "",
-            EET_ESSENTIALS_SOURCE_OVERRIDES,
+            overrides,
         );
-        for (tp2, id, label, selector_key, selector_value) in EXPECTED_PINS {
-            let (source, tier) = tiers.resolve(tp2).expect("pinned mod resolves");
+        for (tp2, kind, value, source_id, source_label) in expected {
+            let (source, tier) = tiers
+                .resolve(tp2)
+                .unwrap_or_else(|| panic!("{label}: {tp2} must resolve"));
             assert_eq!(
                 tier,
                 SourceTier::Modlist,
-                "{tp2} must resolve from the modlist"
+                "{label}: {tp2} must resolve from the modlist overlay, not the stock tier"
             );
-            assert_eq!(source.source_id, id);
-            assert_eq!(source.source_label, label);
-            assert!(source.channel.is_none(), "{tp2} must not keep a channel");
-            let (pinned, other) = if selector_key == "tag" {
-                (&source.tag, &source.branch)
-            } else {
-                (&source.branch, &source.tag)
-            };
-            assert_eq!(pinned.as_deref(), Some(selector_value));
-            assert!(other.is_none(), "{tp2} must carry one selector");
+            assert_eq!(
+                &source.source_id, source_id,
+                "{label}: {tp2} source id mismatch"
+            );
+            assert_eq!(
+                &source.source_label, source_label,
+                "{label}: {tp2} source label mismatch"
+            );
+            assert!(
+                source.channel.is_none(),
+                "{label}: {tp2} must carry no channel"
+            );
+            match *kind {
+                "commit" => {
+                    let commit = source.commit.as_deref().unwrap_or_default();
+                    assert_eq!(
+                        commit.len(),
+                        40,
+                        "{label}: {tp2} commit must be 40 hex characters"
+                    );
+                    assert!(
+                        commit.chars().all(|c| c.is_ascii_hexdigit()),
+                        "{label}: {tp2} commit must be hex"
+                    );
+                    assert_eq!(commit, *value, "{label}: {tp2} commit mismatch");
+                    assert!(
+                        source.tag.is_none(),
+                        "{label}: {tp2} must carry only a commit"
+                    );
+                    assert!(
+                        source.branch.is_none(),
+                        "{label}: {tp2} must carry only a commit"
+                    );
+                }
+                "tag" => {
+                    assert_eq!(
+                        source.tag.as_deref(),
+                        Some(*value),
+                        "{label}: {tp2} tag mismatch"
+                    );
+                    assert!(
+                        source.commit.is_none(),
+                        "{label}: {tp2} must carry only a tag"
+                    );
+                    assert!(
+                        source.branch.is_none(),
+                        "{label}: {tp2} must carry only a tag"
+                    );
+                }
+                _ => unreachable!(),
+            }
         }
     }
 
     #[test]
-    fn eet_essentials_overrides_pin_exactly_four_sources() {
-        let parsed: toml::Value =
-            toml::from_str(EET_ESSENTIALS_SOURCE_OVERRIDES).expect("override toml parses");
-        let mods = parsed
-            .get("mods")
-            .and_then(toml::Value::as_array)
-            .expect("mods array");
-        assert_eq!(mods.len(), EXPECTED_PINS.len());
-        for (mod_entry, (tp2, id, label, selector_key, selector_value)) in
-            mods.iter().zip(EXPECTED_PINS)
-        {
-            assert_eq!(
-                mod_entry.get("tp2").and_then(toml::Value::as_str),
-                Some(tp2)
-            );
-            let sources = mod_entry
-                .get("sources")
-                .and_then(toml::Value::as_array)
-                .expect("sources array");
-            assert_eq!(sources.len(), 1);
-            let source = &sources[0];
-            assert_eq!(source.get("id").and_then(toml::Value::as_str), Some(id));
-            assert_eq!(
-                source.get("label").and_then(toml::Value::as_str),
-                Some(label)
-            );
-            assert_eq!(
-                source.get("type").and_then(toml::Value::as_str),
-                Some("github")
-            );
-            assert!(
-                source
-                    .get("url")
-                    .and_then(toml::Value::as_str)
-                    .is_some_and(|url| !url.is_empty())
-            );
-            assert!(
-                source
-                    .get("repo")
-                    .and_then(toml::Value::as_str)
-                    .is_some_and(|repo| !repo.is_empty())
-            );
-            assert_eq!(
-                source.get(selector_key).and_then(toml::Value::as_str),
-                Some(selector_value)
-            );
-            let other_key = if selector_key == "tag" {
-                "branch"
-            } else {
-                "tag"
-            };
-            assert!(source.get(other_key).is_none());
-            assert!(source.get("commit").is_none());
-            assert!(source.get("channel").is_none());
-            assert!(source.get("asset").is_none());
-        }
+    fn every_source_snapshot_pin_is_a_full_commit_sha() {
+        assert_pins(
+            &overrides_text_for("eet-essentials"),
+            &EET_ESSENTIALS_PINS,
+            "eet-essentials",
+        );
+
+        let subset = |tp2s: &[&str]| -> Vec<(&str, &str, &str, &str, &str)> {
+            EET_ESSENTIALS_PINS
+                .iter()
+                .filter(|(tp2, ..)| tp2s.contains(tp2))
+                .copied()
+                .collect()
+        };
+
+        assert_pins(
+            &overrides_text_for("eet-plus-fixes"),
+            &subset(&["DlcMerger", "eefixpack", "eet", "EET_END"]),
+            "eet-plus-fixes",
+        );
+        assert_pins(
+            &overrides_text_for("bgee-vanilla-plus"),
+            &subset(&["DlcMerger", "eefixpack", "cdtweaks"]),
+            "bgee-vanilla-plus",
+        );
+        assert_pins(
+            &overrides_text_for("bgee-vanilla-plus-no-dlc"),
+            &subset(&["eefixpack"]),
+            "bgee-vanilla-plus-no-dlc",
+        );
+        assert_pins(
+            &overrides_text_for("iwdee-essentials"),
+            &subset(&["cdtweaks"]),
+            "iwdee-essentials",
+        );
     }
 
     #[test]
@@ -1327,10 +1335,10 @@ mod tests {
             .iter()
             .find(|e| e.id == "iwdee-essentials")
             .expect("Icewind Dale Essentials is in the catalog");
-        let state = export_state_for(entry);
-        assert_eq!(state.step3.bgee_items.len(), 1);
-        assert!(state.step3.bg2ee_items.is_empty());
-        assert_eq!(state.step3.bgee_items[0].selected_order, 1);
+        let code = share_code(entry).expect("export");
+        let preview = preview_modlist_share_code(&code).expect("parse");
+        assert_eq!(preview.bgee_entries, 1);
+        assert_eq!(preview.bg2ee_entries, 0);
     }
 
     fn log_lines(text: &str) -> Vec<&str> {
@@ -1438,5 +1446,169 @@ mod tests {
             })
             .sum();
         assert_eq!(total, 2);
+    }
+
+    fn parsed_lines(text: &str) -> Vec<crate::mods::component::Component> {
+        log_lines(text)
+            .into_iter()
+            .map(|line| {
+                crate::mods::component::Component::parse_weidu_line(line)
+                    .expect("payload line parses")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn payload_lines_match_the_card_mod_list() {
+        for entry in entries() {
+            let code = share_code(entry).expect("export");
+            let preview = preview_modlist_share_code(&code).expect("parse");
+
+            let first_game_components = parsed_lines(&preview.bgee_log_text);
+            let second_game_components = parsed_lines(&preview.bg2ee_log_text);
+
+            let first_game_mods: Vec<&GalleryMod> = entry
+                .mods
+                .iter()
+                .filter(|m| m.target != Game::BG2EE)
+                .collect();
+            let second_game_mods: Vec<&GalleryMod> = entry
+                .mods
+                .iter()
+                .filter(|m| m.target == Game::BG2EE)
+                .collect();
+
+            assert_eq!(
+                first_game_components.len(),
+                first_game_mods.len(),
+                "{} bgee tab count mismatch",
+                entry.name
+            );
+            assert_eq!(
+                second_game_components.len(),
+                second_game_mods.len(),
+                "{} bg2ee tab count mismatch",
+                entry.name
+            );
+
+            for (component, gallery_mod) in first_game_components
+                .iter()
+                .zip(first_game_mods.iter())
+                .chain(second_game_components.iter().zip(second_game_mods.iter()))
+            {
+                assert!(
+                    component.name.eq_ignore_ascii_case(gallery_mod.mod_name),
+                    "{} folder mismatch for {}",
+                    entry.name,
+                    gallery_mod.mod_name
+                );
+                assert!(
+                    component.tp_file.eq_ignore_ascii_case(gallery_mod.tp_file),
+                    "{} tp2 mismatch for {}",
+                    entry.name,
+                    gallery_mod.mod_name
+                );
+                assert_eq!(
+                    component.component, gallery_mod.component_id,
+                    "{} component id mismatch for {}",
+                    entry.name, gallery_mod.mod_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn versioned_lines_keep_their_labels() {
+        fn split_label(label: &str) -> (String, String) {
+            let mut parts = label.splitn(2, "->");
+            let name = parts.next().unwrap_or_default().trim().to_string();
+            let sub = parts.next().unwrap_or_default().trim().to_string();
+            (name, sub)
+        }
+
+        for entry in entries() {
+            let code = share_code(entry).expect("export");
+            let preview = preview_modlist_share_code(&code).expect("parse");
+
+            let first_game_components = parsed_lines(&preview.bgee_log_text);
+            let second_game_components = parsed_lines(&preview.bg2ee_log_text);
+
+            let first_game_mods: Vec<&GalleryMod> = entry
+                .mods
+                .iter()
+                .filter(|m| m.target != Game::BG2EE)
+                .collect();
+            let second_game_mods: Vec<&GalleryMod> = entry
+                .mods
+                .iter()
+                .filter(|m| m.target == Game::BG2EE)
+                .collect();
+
+            for (component, gallery_mod) in first_game_components
+                .iter()
+                .zip(first_game_mods.iter())
+                .chain(second_game_components.iter().zip(second_game_mods.iter()))
+            {
+                if component.version.is_empty() {
+                    continue;
+                }
+                let (expected_name, expected_sub) = split_label(gallery_mod.component_label);
+                assert_eq!(
+                    component.component_name, expected_name,
+                    "{} {} component_name mismatch",
+                    entry.name, gallery_mod.mod_name
+                );
+                assert_eq!(
+                    component.sub_component, expected_sub,
+                    "{} {} sub_component mismatch",
+                    entry.name, gallery_mod.mod_name
+                );
+                assert!(
+                    !component.version.is_empty(),
+                    "{} {} must carry a version",
+                    entry.name,
+                    gallery_mod.mod_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eet_essentials_shows_real_versions_in_the_inside_model() {
+        use crate::app::mod_downloads::source_tiers_from_texts;
+        use crate::ui::install::inside_model;
+
+        let entry = entries()
+            .iter()
+            .find(|e| e.id == "eet-essentials")
+            .expect("EET Essentials is in the catalog");
+        let code = share_code(entry).expect("export");
+        let preview = preview_modlist_share_code(&code).expect("parse");
+        let tiers = source_tiers_from_texts(
+            include_str!("../../../core/config/default_mod_downloads.toml"),
+            "",
+            &preview.source_overrides_text,
+        );
+        let model = inside_model::build(&preview, &tiers);
+
+        let version_of = |folder: &str| -> String {
+            model
+                .sections
+                .iter()
+                .find_map(|section| {
+                    section
+                        .mods
+                        .iter()
+                        .find(|group| group.folder.eq_ignore_ascii_case(folder))
+                        .map(|group| group.version.clone())
+                })
+                .unwrap_or_else(|| panic!("{folder} must appear in the inside model"))
+        };
+
+        assert_eq!(version_of("DlcMerger"), "1.8");
+        assert_eq!(version_of("EEFixPack"), "");
+        assert_eq!(version_of("EET"), "v14.0");
+        assert_eq!(version_of("CDTweaks"), "v18");
+        assert_eq!(version_of("LeUI"), "4.9.1");
     }
 }

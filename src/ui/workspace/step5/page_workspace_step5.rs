@@ -5,11 +5,13 @@ use eframe::egui;
 use std::sync::mpsc::TryRecvError;
 use tracing::warn;
 
+use crate::app::compat_dlc_source::residue_issue;
 use crate::app::state::Step1State;
 use crate::install_runtime::flag_policies::InstallWorkflow;
 use crate::install_runtime::install_concurrency;
 use crate::install_runtime::start_hooks::{self, InstallButtonVariant};
 use crate::registry::model::Game;
+use crate::ui::install::stage_review::{SourceWarningAction, render_source_notice};
 use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::{
     DestinationPrepFlow, OrchestratorApp, PendingWorkspaceDestinationPrep,
@@ -38,6 +40,19 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, modlist_id:
     let post_install_action: Option<PostInstallAction> = entry
         .as_ref()
         .and_then(|e| post_install_actions::render(ui, palette, &orchestrator.wizard_state, e));
+
+    if InstallButtonVariant::from_step5(&orchestrator.wizard_state, false)
+        == InstallButtonVariant::Install
+        && !orchestrator.wizard_state.step5.prep_running
+        && !orchestrator.wizard_state.step5.install_running
+        && let Some(notice) = residue_issue(
+            &orchestrator.wizard_state.step1,
+            &orchestrator.wizard_state.step1.game_install,
+        )
+    {
+        render_source_notice(ui, palette, &notice, SourceWarningAction::ModifyOn);
+        ui.add_space(12.0);
+    }
 
     let exe_fingerprint = orchestrator.exe_fingerprint.clone();
     let panel_rect = ui.available_rect_before_wrap();

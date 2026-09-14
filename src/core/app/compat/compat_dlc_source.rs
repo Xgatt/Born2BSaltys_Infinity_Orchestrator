@@ -7,35 +7,58 @@ use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::collections::hash_map::Entry as HashMapEntry;
 use std::path::Path;
 
-use crate::app::source_check::{self, SodDlcState};
+use crate::app::source_check::{self, SodDlcState, SourceGame, SourceReport};
 use crate::app::state::{Step1State, Step2ModState, Step3ItemState};
 
 use super::compat_rule_runtime::{collect_step2_active_items, normalize_mod_key};
 use super::compat_step3_rules::{Step3CompatMarker, marker_key};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceProbe {
+    pub(crate) game: SourceGame,
+    pub(crate) report: SourceReport,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DlcSourceCheck {
-    probes: BTreeMap<String, SodDlcState>,
+    probes: BTreeMap<String, SourceProbe>,
 }
 
 pub(crate) fn refresh_source_check(step1: &mut Step1State) -> bool {
-    let wanted = [
-        step1.bgee_game_folder.trim(),
-        step1.eet_bgee_game_folder.trim(),
-    ];
+    let mut wanted: Vec<(&str, SourceGame)> = Vec::with_capacity(5);
+    for candidate in [
+        (step1.bgee_game_folder.trim(), SourceGame::Bgee),
+        (step1.eet_bgee_game_folder.trim(), SourceGame::Bgee),
+        (step1.bg2ee_game_folder.trim(), SourceGame::Bg2ee),
+        (step1.eet_bg2ee_game_folder.trim(), SourceGame::Bg2ee),
+        (step1.iwdee_game_folder.trim(), SourceGame::Iwdee),
+    ] {
+        if !candidate.0.is_empty() && !wanted.iter().any(|(source, _)| *source == candidate.0) {
+            wanted.push(candidate);
+        }
+    }
     let probes = &mut step1.dlc_source_check.probes;
-    let up_to_date = probes.keys().all(|key| wanted.contains(&key.as_str()))
-        && wanted
+    let up_to_date = probes.iter().all(|(key, probe)| {
+        wanted
             .iter()
-            .filter(|source| !source.is_empty())
-            .all(|source| probes.contains_key(*source));
+            .any(|(source, game)| *source == key.as_str() && *game == probe.game)
+    }) && wanted
+        .iter()
+        .all(|(source, game)| probes.get(*source).is_some_and(|probe| probe.game == *game));
     if up_to_date {
         return false;
     }
-    probes.retain(|key, _| wanted.contains(&key.as_str()));
-    for source in wanted.into_iter().filter(|source| !source.is_empty()) {
+    probes.retain(|key, probe| {
+        wanted
+            .iter()
+            .any(|(source, game)| *source == key.as_str() && *game == probe.game)
+    });
+    for (source, game) in wanted {
         if let BTreeMapEntry::Vacant(slot) = probes.entry(source.to_string()) {
-            slot.insert(source_check::sod_state(Path::new(source)));
+            slot.insert(SourceProbe {
+                game,
+                report: source_check::inspect(Path::new(source), game),
+            });
         }
     }
     true
@@ -44,9 +67,26 @@ pub(crate) fn refresh_source_check(step1: &mut Step1State) -> bool {
 #[must_use]
 pub(crate) fn bgee_source_for<'a>(step1: &'a Step1State, game: &str) -> &'a str {
     if game == "EET" {
+        let plain = step1.bgee_game_folder.trim();
+        if !plain.is_empty() {
+            return plain;
+        }
         step1.eet_bgee_game_folder.trim()
     } else {
         step1.bgee_game_folder.trim()
+    }
+}
+
+#[must_use]
+pub(crate) fn bg2ee_source_for<'a>(step1: &'a Step1State, game: &str) -> &'a str {
+    if game == "EET" {
+        let plain = step1.bg2ee_game_folder.trim();
+        if !plain.is_empty() {
+            return plain;
+        }
+        step1.eet_bg2ee_game_folder.trim()
+    } else {
+        step1.bg2ee_game_folder.trim()
     }
 }
 
@@ -60,7 +100,7 @@ fn required_for_game(step1: &Step1State, game: &str) -> bool {
             .dlc_source_check
             .probes
             .get(bgee_source_for(step1, game))
-            .is_some_and(|sod| matches!(sod, SodDlcState::Unmerged { .. }))
+            .is_some_and(|probe| matches!(probe.report.sod, SodDlcState::Unmerged { .. }))
 }
 
 fn is_merger(tp_file: &str, component: &str) -> bool {
@@ -77,12 +117,13 @@ pub(crate) enum SourceNoticeSeverity {
 pub(crate) enum SourceRemedy {
     OrderMerger,
     ChangeSource,
+    CleanSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceNotice {
     pub(crate) severity: SourceNoticeSeverity,
-    pub(crate) text: &'static str,
+    pub(crate) text: String,
     pub(crate) remedy: SourceRemedy,
 }
 
@@ -93,10 +134,12 @@ pub(crate) fn preview_issue(
     if !matches!(preview.game_install.as_str(), "BGEE" | "EET") {
         return None;
     }
-    let sod = step1
+    let sod = &step1
         .dlc_source_check
         .probes
-        .get(bgee_source_for(step1, &preview.game_install))?;
+        .get(bgee_source_for(step1, &preview.game_install))?
+        .report
+        .sod;
     if matches!(sod, SodDlcState::NotApplicable) {
         return None;
     }
@@ -120,22 +163,22 @@ pub(crate) fn preview_issue(
         return match (position, sod) {
             (0, SodDlcState::Unmerged { .. }) => Some(SourceNotice {
                 severity: SourceNoticeSeverity::Info,
-                text: "This modlist needs Siege of Dragonspear. Your BGEE source has the DLC archive; DLC Merger merges it during the install.",
+                text: "This modlist needs Siege of Dragonspear. Your BGEE source has the DLC archive; DLC Merger merges it during the install.".to_string(),
                 remedy: SourceRemedy::OrderMerger,
             }),
             (_, SodDlcState::Unmerged { .. }) => Some(SourceNotice {
                 severity: SourceNoticeSeverity::Warning,
-                text: "Move DLC Merger (#1 or #3) first in the BGEE installation order.",
+                text: "Move DLC Merger (#1 or #3) first in the BGEE installation order.".to_string(),
                 remedy: SourceRemedy::OrderMerger,
             }),
             (_, SodDlcState::Merged) => Some(SourceNotice {
                 severity: SourceNoticeSeverity::Warning,
-                text: "This modlist includes DLC Merger, but your BGEE source already has Siege of Dragonspear merged. DLC Merger stops with 'already merged'; remove it before installing.",
+                text: "This modlist includes DLC Merger, but your BGEE source already has Siege of Dragonspear merged. DLC Merger stops with 'already merged'; remove it before installing.".to_string(),
                 remedy: SourceRemedy::ChangeSource,
             }),
             (_, SodDlcState::Absent) => Some(SourceNotice {
                 severity: SourceNoticeSeverity::Warning,
-                text: "This modlist needs Siege of Dragonspear, and your BGEE source does not have it. DLC Merger will fail; install from a source that includes the DLC.",
+                text: "This modlist needs Siege of Dragonspear, and your BGEE source does not have it. DLC Merger will fail; install from a source that includes the DLC.".to_string(),
                 remedy: SourceRemedy::ChangeSource,
             }),
             (_, SodDlcState::NotApplicable) => None,
@@ -146,18 +189,54 @@ pub(crate) fn preview_issue(
     if has_tweaks_anywhere && matches!(sod, SodDlcState::Unmerged { .. }) {
         return Some(SourceNotice {
             severity: SourceNoticeSeverity::Warning,
-            text: "Your BGEE source contains DLC that needs merging. This modlist includes CDTweaks, which requires DLC Merger for this source.",
+            text: "Your BGEE source contains DLC that needs merging. This modlist includes CDTweaks, which requires DLC Merger for this source.".to_string(),
             remedy: SourceRemedy::OrderMerger,
         });
     }
     None
 }
 
+#[must_use]
+pub(crate) fn residue_issue(step1: &Step1State, game_install: &str) -> Option<SourceNotice> {
+    let folders: &[(&str, &str)] = match game_install {
+        "BGEE" => &[("BGEE", step1.bgee_game_folder.trim())],
+        "BG2EE" => &[("BG2EE", step1.bg2ee_game_folder.trim())],
+        "IWDEE" => &[("IWDEE", step1.iwdee_game_folder.trim())],
+        "EET" => &[
+            ("BGEE", bgee_source_for(step1, "EET")),
+            ("BG2EE", bg2ee_source_for(step1, "EET")),
+        ],
+        _ => &[],
+    };
+    let sentences = folders
+        .iter()
+        .filter(|(_, folder)| !folder.is_empty())
+        .filter_map(|(label, folder)| {
+            let probe = step1.dlc_source_check.probes.get(*folder)?;
+            (!probe.report.residue.is_clean()).then(|| {
+                format!(
+                    "Your {label} source at {folder} is not a clean install: {}.",
+                    probe.report.residue.describe()
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if sentences.is_empty() {
+        return None;
+    }
+    Some(SourceNotice {
+        severity: SourceNoticeSeverity::Warning,
+        text: sentences.join(" "),
+        remedy: SourceRemedy::CleanSource,
+    })
+}
+
 fn marker(step1: &Step1State, kind: &str, component: &str) -> Step3CompatMarker {
     let sod = step1
         .dlc_source_check
         .probes
-        .get(bgee_source_for(step1, &step1.game_install));
+        .get(bgee_source_for(step1, &step1.game_install))
+        .map(|probe| &probe.report.sod);
     Step3CompatMarker {
         kind: kind.to_string(),
         message: Some(if kind == "order_block" {
