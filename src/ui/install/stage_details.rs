@@ -4,6 +4,7 @@
 use eframe::egui;
 use tracing::warn;
 
+use crate::app::compat_dlc_source::SourceNotice;
 use crate::app::controller::util::open_in_shell;
 use crate::app::modlist_share::{ForkAncestor, ModlistSharePreview};
 use crate::registry::model::Game;
@@ -50,7 +51,7 @@ pub(crate) struct FactRow {
 }
 
 pub(crate) struct DetailsHeader {
-    pub(crate) source_compat_issue: Option<&'static str>,
+    pub(crate) source_compat_issue: Option<SourceNotice>,
     pub(crate) name: String,
     pub(crate) author: Option<String>,
     pub(crate) version: Option<String>,
@@ -344,10 +345,11 @@ fn body_columns(
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.set_width(prose_w);
-                if let Some(issue) = header.source_compat_issue {
-                    stage_review::render_source_warning(
+                if let Some(notice) = &header.source_compat_issue {
+                    stage_review::render_source_notice(
                         ui,
-                        issue,
+                        palette,
+                        notice,
                         stage_review::source_warning_action(
                             availability == ModifyAvailability::OnlyInstall,
                             availability == ModifyAvailability::OnlyModify,

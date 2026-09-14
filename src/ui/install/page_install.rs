@@ -116,7 +116,9 @@ fn details_stage(
         )
     };
     let availability = stage_review::modify_choice_available(origin, preview.allow_auto_install);
-    header.source_compat_issue = orchestrator.install_screen_state.source_compat_issue;
+    header
+        .source_compat_issue
+        .clone_from(&orchestrator.install_screen_state.source_compat_issue);
     let mut fork_info_open = orchestrator.install_screen_state.fork_info_open;
 
     let outcome = stage_details::render(
@@ -230,8 +232,7 @@ fn begin_install(orchestrator: &mut OrchestratorApp) -> InstallStage {
         &mut orchestrator.install_screen_state,
         &orchestrator.wizard_state.step1,
     );
-    let issue = orchestrator.install_screen_state.source_compat_issue;
-    if issue.is_some() {
+    if stage_review::source_notice_blocks(&orchestrator.install_screen_state) {
         orchestrator.install_screen_state.drawer.open = Some(DrawerKind::Install);
         return InstallStage::Details;
     }
@@ -532,7 +533,19 @@ mod tests {
         });
 
         refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
-        assert!(app.install_screen_state.source_compat_issue.is_some());
+        let notice = app
+            .install_screen_state
+            .source_compat_issue
+            .as_ref()
+            .expect("notice");
+        assert_eq!(
+            notice.severity,
+            crate::app::compat_dlc_source::SourceNoticeSeverity::Warning
+        );
+        assert_eq!(
+            notice.text,
+            "Your BGEE source contains DLC that needs merging. This modlist includes CDTweaks, which requires DLC Merger for this source."
+        );
 
         std::fs::remove_file(source.join("sod-dlc.zip")).expect("remove synthetic archive");
         app.wizard_state.step1.bgee_game_folder.clear();
@@ -829,6 +842,74 @@ mod tests {
         begin_install(&mut app);
 
         assert!(app.install_screen_state.drawer.open.is_none());
+    }
+
+    #[test]
+    fn begin_install_proceeds_past_an_info_notice() {
+        use crate::app::compat_dlc_source::{SourceNoticeSeverity, refresh_source_check};
+        use crate::app::modlist_share::ModlistSharePreview;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+        let source = std::env::temp_dir().join(format!(
+            "bio-page-install-info-source-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&source).expect("create source fixture");
+        std::fs::write(source.join("sod-dlc.zip"), b"synthetic archive fixture")
+            .expect("write synthetic archive");
+        let destination = std::env::temp_dir().join(format!(
+            "bio-page-install-info-dest-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&destination).expect("create destination fixture");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bgee_game_folder = source.to_string_lossy().into_owned();
+        app.wizard_state.step1.game_install = "BGEE".to_string();
+        assert!(refresh_source_check(&mut app.wizard_state.step1));
+
+        app.install_screen_state.import_code = "BIO-MODLIST-V1:STUB".to_string();
+        app.install_screen_state.parsed_preview = Some(ModlistSharePreview {
+            bio_version: String::new(),
+            game_install: "BGEE".to_string(),
+            install_mode: "custom".to_string(),
+            bgee_entries: 0,
+            bg2ee_entries: 0,
+            has_source_overrides: false,
+            has_installed_refs: false,
+            bgee_log_text: "~DLCMERGER/SETUP-DLCMERGER.TP2~ #0 #1 // DLC Merger: v1\n~CDTWEAKS/SETUP-CDTWEAKS.TP2~ #0 #2010 // x: v1".to_string(),
+            bg2ee_log_text: String::new(),
+            source_overrides_text: String::new(),
+            installed_refs_text: String::new(),
+            mod_config_count: 0,
+            mod_configs_text: String::new(),
+            allow_auto_install: true,
+            name: None,
+            author: None,
+            forked_from: Vec::new(),
+        });
+        app.install_screen_state.review.name = "Tactical EET".to_string();
+        app.install_screen_state.destination = destination.to_string_lossy().into_owned();
+        app.install_screen_state.review.modify = false;
+        app.install_screen_state.drawer.open = Some(DrawerKind::Install);
+
+        let stage = begin_install(&mut app);
+
+        assert_eq!(stage, InstallStage::Downloading);
+        assert!(app.install_screen_state.drawer.open.is_none());
+        assert_eq!(
+            app.install_screen_state
+                .source_compat_issue
+                .as_ref()
+                .map(|notice| notice.severity),
+            Some(SourceNoticeSeverity::Info)
+        );
+
+        std::fs::remove_dir_all(&source).expect("clean up source fixture");
+        std::fs::remove_dir_all(&destination).expect("clean up destination fixture");
     }
 
     #[test]

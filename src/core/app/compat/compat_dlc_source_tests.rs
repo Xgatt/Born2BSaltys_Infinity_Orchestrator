@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Born2BSalty
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,11 +10,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::app::state::{Step1State, Step2ComponentState, Step2ModState, Step3ItemState};
 
 use super::super::compat_step3_rules::{Step3CompatMarker, marker_key};
-use super::{apply_step2, apply_step3, preview_issue, refresh_source_check};
+use super::{
+    SourceNotice, SourceNoticeSeverity, SourceRemedy, apply_step2, apply_step3, preview_issue,
+    refresh_source_check,
+};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
-fn fixture() -> PathBuf {
+struct TestRoot(PathBuf);
+
+impl Deref for TestRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn fixture() -> TestRoot {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock after epoch")
@@ -26,7 +46,7 @@ fn fixture() -> PathBuf {
         NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir(&path).expect("create unique fixture");
-    path
+    TestRoot(path)
 }
 
 fn archive(root: &Path, relative: &str) {
@@ -36,12 +56,19 @@ fn archive(root: &Path, relative: &str) {
     std::fs::write(path, b"synthetic archive existence fixture").expect("write fixture");
 }
 
+fn merged_key(root: &Path) {
+    std::fs::write(root.join("chitin.key"), b"data/sod-dlc.bif").expect("write merged key");
+}
+
 fn source_state(root: &Path, mode: &str) -> Step1State {
     let mut state = Step1State {
         bgee_game_folder: root.to_string_lossy().into_owned(),
         game_install: mode.to_string(),
         ..Step1State::default()
     };
+    if mode == "EET" {
+        state.eet_bgee_game_folder = root.to_string_lossy().into_owned();
+    }
     assert!(refresh_source_check(&mut state));
     state
 }
@@ -195,7 +222,7 @@ fn destination_archive_does_not_trigger_or_satisfy_source_requirement() {
     assert!(!needs_merge(&state));
     let unmerged = fixture();
     archive(&unmerged, "sod-dlc.zip");
-    state.bgee_game_folder = unmerged.to_string_lossy().into_owned();
+    state.eet_bgee_game_folder = unmerged.to_string_lossy().into_owned();
     assert!(refresh_source_check(&mut state));
     assert!(needs_merge(&state));
     state.eet_new_dir = source.to_string_lossy().into_owned();
@@ -352,24 +379,54 @@ fn preview(
 
 const TWEAKS_LOG: &str = "~CDTWEAKS/SETUP-CDTWEAKS.TP2~ #0 #2010 // Custom label: v1";
 const OTHER_LOG: &str = "~OTHER/OTHER.TP2~ #0 #0 // CDTweaks DLCmerger: v1";
-const MISSING: &str = "Your BGEE source contains DLC that needs merging. This modlist includes CDTweaks, which requires DLC Merger for this source.";
-const LATE: &str = "Your BGEE source contains DLC that needs merging. Move DLC Merger (#1 or #3) first in the BGEE installation order.";
+const MERGER_FIRST_LOG: &str = "~DLCMERGER/SETUP-DLCMERGER.TP2~ #0 #1 // DLC Merger: v1";
+
+const MISSING_TEXT: &str = "Your BGEE source contains DLC that needs merging. This modlist includes CDTweaks, which requires DLC Merger for this source.";
+const LATE_TEXT: &str = "Move DLC Merger (#1 or #3) first in the BGEE installation order.";
+const INFO_FIRST_TEXT: &str = "This modlist needs Siege of Dragonspear. Your BGEE source has the DLC archive; DLC Merger merges it during the install.";
+const WARN_MERGED_TEXT: &str = "This modlist includes DLC Merger, but your BGEE source already has Siege of Dragonspear merged. DLC Merger stops with 'already merged'; remove it before installing.";
+const WARN_ABSENT_TEXT: &str = "This modlist needs Siege of Dragonspear, and your BGEE source does not have it. DLC Merger will fail; install from a source that includes the DLC.";
+
+fn missing_notice() -> SourceNotice {
+    SourceNotice {
+        severity: SourceNoticeSeverity::Warning,
+        text: MISSING_TEXT,
+        remedy: SourceRemedy::OrderMerger,
+    }
+}
+
+fn late_notice() -> SourceNotice {
+    SourceNotice {
+        severity: SourceNoticeSeverity::Warning,
+        text: LATE_TEXT,
+        remedy: SourceRemedy::OrderMerger,
+    }
+}
+
+fn info_first_notice() -> SourceNotice {
+    SourceNotice {
+        severity: SourceNoticeSeverity::Info,
+        text: INFO_FIRST_TEXT,
+        remedy: SourceRemedy::OrderMerger,
+    }
+}
 
 #[test]
 fn preview_uses_preview_game_and_relevant_logs_even_in_custom_mode() {
     let root = fixture();
     archive(&root, "sod-dlc.zip");
     for current in ["BGEE", "EET", "BG2EE", "IWDEE"] {
-        let state = source_state(&root, current);
+        let mut state = source_state(&root, current);
+        state.eet_bgee_game_folder = root.to_string_lossy().into_owned();
         for game in ["BGEE", "EET", "BG2EE", "IWDEE"] {
-            let expected = matches!(game, "BGEE" | "EET").then_some(MISSING);
+            let expected = matches!(game, "BGEE" | "EET").then(missing_notice);
             assert_eq!(
                 preview_issue(&state, &preview(game, TWEAKS_LOG, "")),
                 expected
             );
             assert_eq!(
                 preview_issue(&state, &preview(game, OTHER_LOG, TWEAKS_LOG)),
-                (game == "EET").then_some(MISSING)
+                (game == "EET").then(missing_notice)
             );
         }
     }
@@ -379,27 +436,39 @@ fn preview_uses_preview_game_and_relevant_logs_even_in_custom_mode() {
 fn preview_requires_merger_one_or_three_first_in_bgee_not_other_phase() {
     let root = fixture();
     archive(&root, "sod-dlc.zip");
-    let state = source_state(&root, "BG2EE");
+    let mut state = source_state(&root, "BG2EE");
+    state.eet_bgee_game_folder = root.to_string_lossy().into_owned();
     for game in ["BGEE", "EET"] {
         for id in ["1", "2", "3"] {
             let merger =
                 format!("~DLCMERGER\\SETUP-DLCMERGER.TP2~ #0 #{id} // Renamed component: v1");
             let first = format!("// Header\n\n{merger}\n{TWEAKS_LOG}");
-            let missing = (id == "2").then_some(MISSING);
-            assert_eq!(preview_issue(&state, &preview(game, &first, "")), missing);
+            let case_first = if id == "2" {
+                Some(missing_notice())
+            } else {
+                Some(info_first_notice())
+            };
+            assert_eq!(
+                preview_issue(&state, &preview(game, &first, "")),
+                case_first
+            );
             let late = format!("{OTHER_LOG}\n{first}");
-            let expected = Some(if id == "2" { MISSING } else { LATE });
+            let expected = Some(if id == "2" {
+                missing_notice()
+            } else {
+                late_notice()
+            });
             assert_eq!(preview_issue(&state, &preview(game, &late, "")), expected);
             let late = format!("{TWEAKS_LOG}\n{merger}");
             assert_eq!(preview_issue(&state, &preview(game, &late, "")), expected);
             assert_eq!(
                 preview_issue(&state, &preview(game, TWEAKS_LOG, &merger)),
-                Some(MISSING)
+                Some(missing_notice())
             );
             if game == "EET" {
                 assert_eq!(
                     preview_issue(&state, &preview(game, &merger, TWEAKS_LOG)),
-                    missing
+                    case_first
                 );
                 let late = format!("{OTHER_LOG}\n{merger}");
                 assert_eq!(
@@ -424,10 +493,10 @@ fn preview_only_reports_relevant_cached_source_issues() {
         "must not probe on preview"
     );
     state = source_state(&root, "BGEE");
-    assert_eq!(preview_issue(&state, &candidate), Some(MISSING));
+    assert_eq!(preview_issue(&state, &candidate), Some(missing_notice()));
     std::fs::rename(root.join("sod-dlc.zip"), root.join("merged.backup"))
         .expect("move synthetic archive");
-    assert_eq!(preview_issue(&state, &candidate), Some(MISSING));
+    assert_eq!(preview_issue(&state, &candidate), Some(missing_notice()));
     for first in ["", OTHER_LOG, "// ~CDTWEAKS/SETUP-CDTWEAKS.TP2~ #0 #2010"] {
         assert_eq!(preview_issue(&state, &preview("BGEE", first, "")), None);
     }
@@ -437,6 +506,74 @@ fn preview_only_reports_relevant_cached_source_issues() {
         None,
         "stale path must not warn"
     );
+}
+
+#[test]
+fn preview_notice_is_info_when_merger_is_first_and_archive_unmerged() {
+    let root = fixture();
+    archive(&root, "sod-dlc.zip");
+    let state = source_state(&root, "BGEE");
+    let log = format!("{MERGER_FIRST_LOG}\n{TWEAKS_LOG}");
+    let notice = preview_issue(&state, &preview("BGEE", &log, "")).expect("info notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Info);
+    assert_eq!(notice.text, INFO_FIRST_TEXT);
+}
+
+#[test]
+fn preview_notice_warns_when_merger_present_on_merged_source() {
+    let root = fixture();
+    merged_key(&root);
+    let state = source_state(&root, "BGEE");
+    let notice =
+        preview_issue(&state, &preview("BGEE", MERGER_FIRST_LOG, "")).expect("warning notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Warning);
+    assert_eq!(notice.text, WARN_MERGED_TEXT);
+    assert_eq!(notice.remedy, SourceRemedy::ChangeSource);
+}
+
+#[test]
+fn preview_notice_warns_when_merger_present_and_sod_absent() {
+    let root = fixture();
+    let state = source_state(&root, "BGEE");
+    let notice =
+        preview_issue(&state, &preview("BGEE", MERGER_FIRST_LOG, "")).expect("warning notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Warning);
+    assert_eq!(notice.text, WARN_ABSENT_TEXT);
+    assert_eq!(notice.remedy, SourceRemedy::ChangeSource);
+}
+
+#[test]
+fn preview_notice_keeps_tweaks_warning_without_merger() {
+    let root = fixture();
+    archive(&root, "sod-dlc.zip");
+    let state = source_state(&root, "BGEE");
+    let notice = preview_issue(&state, &preview("BGEE", TWEAKS_LOG, "")).expect("warning notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Warning);
+    assert_eq!(notice.text, MISSING_TEXT);
+}
+
+#[test]
+fn merged_source_with_archive_left_does_not_require_merging() {
+    let root = fixture();
+    archive(&root, "sod-dlc.zip");
+    merged_key(&root);
+    let state = source_state(&root, "BGEE");
+    assert!(!needs_merge(&state));
+}
+
+#[test]
+fn eet_preview_inspects_the_eet_bgee_folder() {
+    let merged_root = fixture();
+    merged_key(&merged_root);
+    let mut state = source_state(&merged_root, "BGEE");
+    let eet_root = fixture();
+    archive(&eet_root, "sod-dlc.zip");
+    state.eet_bgee_game_folder = eet_root.to_string_lossy().into_owned();
+    assert!(refresh_source_check(&mut state));
+    let log = format!("{MERGER_FIRST_LOG}\n{TWEAKS_LOG}");
+    let notice = preview_issue(&state, &preview("EET", &log, "")).expect("info notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Info);
+    assert_eq!(notice.text, INFO_FIRST_TEXT);
 }
 
 #[test]

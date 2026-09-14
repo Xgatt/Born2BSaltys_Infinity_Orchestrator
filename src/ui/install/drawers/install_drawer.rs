@@ -84,7 +84,7 @@ pub(crate) fn render(
     };
 
     let disabled = stage_review::begin_disabled_for(state, &checks);
-    let begin_label = if state.source_compat_issue.is_some() && state.review.modify {
+    let begin_label = if stage_review::source_notice_blocks(state) && state.review.modify {
         "Continue to Modify"
     } else {
         stage_review::begin_label(state.review.modify)

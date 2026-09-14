@@ -272,7 +272,7 @@ impl InstallPipelineFlags {
 
 #[derive(Debug, Clone, Default)]
 pub struct InstallScreenState {
-    pub(crate) source_compat_issue: Option<&'static str>,
+    pub(crate) source_compat_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
     pub stage: InstallStage,
     pub pipeline_kind: PipelineKind,
     pub(crate) gallery: GalleryScreenState,
