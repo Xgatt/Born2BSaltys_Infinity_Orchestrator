@@ -23,6 +23,7 @@ const MODIFY_NO: &str = "No, install as provided";
 const MODIFY_YES: &str = "Yes, review and modify";
 const HINT_INSTALL: &str = "downloads mods and installs the selected components in order";
 const HINT_FORK: &str = "downloads mods, applies selection + order, then drops you on Step 2";
+const HINT_FORK_ADD_MODS: &str = "to add mods, extract them into the modlist's Mods folder and rescan; the ? on the Mods / Components page shows where";
 const NO_DISABLED_REASON: &str =
     "this share code was exported mid-install, so it can only be reviewed and modified";
 const REINSTALL_ONLY_INSTALL_REASON: &str =
@@ -252,6 +253,16 @@ pub(crate) fn render_install_settings(
         .family(egui::FontFamily::Name("poppins_light".into()))
         .color(redesign_text_faint(palette)),
     );
+
+    if state.review.modify {
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new(HINT_FORK_ADD_MODS)
+                .size(13.0)
+                .family(egui::FontFamily::Name("poppins_light".into()))
+                .color(redesign_text_faint(palette)),
+        );
+    }
 }
 
 fn fact_row(ui: &mut egui::Ui, palette: ThemePalette, label: &str, value: &str) {

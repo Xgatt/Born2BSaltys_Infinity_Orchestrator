@@ -5,9 +5,11 @@ use eframe::egui;
 
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::orchestrator::widgets::dialogs::confirm_dialog::{self, ConfirmOutcome};
+use crate::ui::orchestrator::widgets::{BtnOpts, redesign_btn};
 use crate::ui::shared::redesign_tokens::{
-    REDESIGN_BORDER_RADIUS_U8, REDESIGN_SHELL_BORDER_WIDTH_PX, WORKSPACE_CONTENT_TEXT_INSET,
-    redesign_border_strong, redesign_shell_bg, redesign_text_primary,
+    REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, REDESIGN_SHELL_BORDER_WIDTH_PX,
+    ThemePalette, WORKSPACE_CONTENT_TEXT_INSET, redesign_border_strong, redesign_shell_bg,
+    redesign_text_faint, redesign_text_muted, redesign_text_primary, redesign_with_alpha,
 };
 use crate::ui::shared::tab_open_seam::paint_active_tab_seam_cover;
 use crate::ui::step2::action_step2::Step2Action;
@@ -37,7 +39,13 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<S
     let rects = Step2LayoutRects::from_root(ui.available_rect_before_wrap());
     let mut action: Option<Step2Action> = None;
 
-    render_title(ui, palette, rects.title);
+    let mods_folder = orchestrator
+        .wizard_state
+        .step1
+        .mods_folder
+        .trim()
+        .to_string();
+    render_title(ui, palette, rects.title, &mods_folder);
 
     if let Some(a) = step2_search::render(ui, orchestrator, palette, rects.search) {
         action = Some(a);
@@ -177,11 +185,15 @@ impl Step2PaneRects {
     }
 }
 
-fn render_title(
-    ui: &mut egui::Ui,
-    palette: crate::ui::shared::redesign_tokens::ThemePalette,
-    rect: egui::Rect,
-) {
+const HELP_HOVER: &str = "How to add mods to this modlist";
+const HELP_TITLE: &str = "Adding mods to this modlist";
+const HELP_STEP_1: &str = "1. Download the mod you want to add.";
+const HELP_STEP_2: &str = "2. Extract it so the mod's own folder (the one holding its .tp2) sits directly inside this modlist's Mods folder.";
+const HELP_STEP_3: &str = "3. Click Rescan Mods to pick it up.";
+const HELP_NO_FOLDER: &str = "Mods folder not set yet: run a scan first.";
+const HELP_OPEN_BUTTON: &str = "Open Mods folder";
+
+fn render_title(ui: &mut egui::Ui, palette: ThemePalette, rect: egui::Rect, mods_folder: &str) {
     let title_text_rect = egui::Rect::from_min_max(
         rect.min + egui::vec2(WORKSPACE_CONTENT_TEXT_INSET, 0.0),
         rect.max,
@@ -194,6 +206,126 @@ fn render_title(
                 .color(redesign_text_primary(palette)),
         );
     });
+
+    ui.scope_builder(egui::UiBuilder::new().max_rect(title_text_rect), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let popup_id = ui.make_persistent_id("workspace_step2_add_mods_help");
+            let response = help_glyph_button(ui, palette);
+            if response.clicked() {
+                ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+            }
+            let response = response.on_hover_text(HELP_HOVER);
+            egui::popup_below_widget(
+                ui,
+                popup_id,
+                &response,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    ui.set_max_width(320.0);
+                    egui::Frame::default()
+                        .fill(redesign_shell_bg(palette))
+                        .stroke(egui::Stroke::new(
+                            REDESIGN_BORDER_WIDTH_PX,
+                            redesign_border_strong(palette),
+                        ))
+                        .corner_radius(egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8))
+                        .inner_margin(egui::Margin::same(10))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(HELP_TITLE)
+                                    .size(12.0)
+                                    .family(egui::FontFamily::Name("poppins_medium".into()))
+                                    .color(redesign_text_primary(palette)),
+                            );
+                            ui.add_space(4.0);
+                            for line in [HELP_STEP_1, HELP_STEP_2, HELP_STEP_3] {
+                                ui.label(
+                                    egui::RichText::new(line)
+                                        .size(12.0)
+                                        .family(egui::FontFamily::Name("poppins_light".into()))
+                                        .color(redesign_text_muted(palette)),
+                                );
+                            }
+                            ui.add_space(6.0);
+                            if mods_folder.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(HELP_NO_FOLDER)
+                                        .size(12.0)
+                                        .family(egui::FontFamily::Name("poppins_light".into()))
+                                        .color(redesign_text_faint(palette)),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(mods_folder)
+                                        .size(11.0)
+                                        .family(egui::FontFamily::Monospace)
+                                        .color(redesign_text_muted(palette)),
+                                );
+                            }
+                            ui.add_space(8.0);
+                            let open_response = redesign_btn(
+                                ui,
+                                palette,
+                                HELP_OPEN_BUTTON,
+                                BtnOpts {
+                                    small: true,
+                                    disabled: mods_folder.is_empty(),
+                                    ..BtnOpts::default()
+                                },
+                            );
+                            if open_response.clicked()
+                                && let Err(err) =
+                                    crate::app::controller::util::open_in_shell(mods_folder)
+                            {
+                                tracing::warn!(
+                                    target = "orchestrator",
+                                    "Open Mods folder failed: {err}"
+                                );
+                            }
+                        });
+                },
+            );
+        });
+    });
+}
+
+fn help_glyph_button(ui: &mut egui::Ui, palette: ThemePalette) -> egui::Response {
+    let size = egui::vec2(22.0, 22.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let fill = if response.hovered() {
+            redesign_shell_bg(palette)
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8),
+            fill,
+        );
+        painter.rect_stroke(
+            rect,
+            egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8),
+            egui::Stroke::new(REDESIGN_BORDER_WIDTH_PX, redesign_border_strong(palette)),
+            egui::StrokeKind::Inside,
+        );
+        let color = if response.hovered() {
+            redesign_text_primary(palette)
+        } else {
+            redesign_with_alpha(redesign_text_primary(palette), 4, 10)
+        };
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "?",
+            egui::FontId::new(13.0, egui::FontFamily::Name("poppins_light".into())),
+            color,
+        );
+    }
+
+    response
 }
 
 fn sync_details_selection(orchestrator: &mut OrchestratorApp) {
