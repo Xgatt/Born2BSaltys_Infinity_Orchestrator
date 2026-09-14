@@ -90,6 +90,10 @@ pub(crate) fn export_modlist_share_code_with(
     });
     insert_export_provenance(&mut payload, state);
     let payload_text = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
+    encode_share_payload_text(&payload_text)
+}
+
+pub(crate) fn encode_share_payload_text(payload_text: &str) -> Result<String, String> {
     let compressed = zlib_compress(payload_text.as_bytes())?;
     Ok(format!(
         "{SHARE_CODE_PREFIX}{}",
@@ -710,9 +714,30 @@ struct ShareModDownloadSource {
     repo: Option<String>,
 }
 
+pub(crate) fn pin_source_to_installed_ref(
+    source: &mut crate::app::mod_downloads::ModDownloadSource,
+    installed_ref: Option<&str>,
+) {
+    let Some(installed_ref) = installed_ref.map(str::trim) else {
+        return;
+    };
+    let Some((_, sha)) = installed_ref.rsplit_once('@') else {
+        return;
+    };
+    if sha.len() < 7 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        return;
+    }
+    source.commit = Some(sha.to_string());
+    source.branch = None;
+}
+
 fn build_resolved_source_overrides(state: &WizardState) -> Result<Option<String>, String> {
+    use crate::app::app_step2_update_source_refs::load_refs_file_at;
+
     let source_load = crate::app::mod_downloads::load_mod_download_sources();
     let installed_ids = crate::app::app_step2_update_source_refs::load_installed_source_ids();
+    let refs_file =
+        load_refs_file_at(&crate::app::app_step2_update_source_refs::installed_source_refs_path());
 
     let mut toml_out = String::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -722,18 +747,22 @@ fn build_resolved_source_overrides(state: &WizardState) -> Result<Option<String>
         .iter()
         .chain(state.step2.bg2ee_mods.iter())
     {
-        let Some(source) =
+        let Some(mut source) =
             resolve_mod_config_source(state, &source_load, &installed_ids, &mod_state.tp_file)
         else {
             continue;
         };
+        let normalized_tp2 =
+            crate::app::mod_downloads::normalize_mod_download_tp2(&mod_state.tp_file);
         let key = (
-            crate::app::mod_downloads::normalize_mod_download_tp2(&mod_state.tp_file),
+            normalized_tp2.clone(),
             source.source_id.trim().to_ascii_lowercase(),
         );
         if !seen.insert(key) {
             continue;
         }
+        let installed_ref = refs_file.refs.get(&normalized_tp2);
+        pin_source_to_installed_ref(&mut source, installed_ref.map(String::as_str));
         let block = serialize_resolved_mod(&mod_state.tp_file, &mod_state.name, &source);
         if !toml_out.is_empty() {
             toml_out.push_str("\n\n");
@@ -1220,7 +1249,9 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = AmbientGuard::acquire();
-        crate::app::mod_downloads::set_active_modlist_dir(None);
+
+        let tmp_dir = unique_share_tmp_dir("skips_unresolvable");
+        crate::app::mod_downloads::set_active_modlist_dir(Some(tmp_dir.clone()));
 
         let mut state = WizardState::default();
         state.step3.bgee_items = vec![];
@@ -1232,6 +1263,8 @@ mod tests {
             result.unwrap().is_none(),
             "empty mods list must yield None source overrides"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     fn count_mods_blocks_for_tp2(toml_out: &str, tp2: &str) -> usize {
@@ -1368,6 +1401,91 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn installed_branch_ref_becomes_a_commit_pin() {
+        let mut source = crate::app::mod_downloads::ModDownloadSource {
+            branch: Some("master".to_string()),
+            ..Default::default()
+        };
+        pin_source_to_installed_ref(
+            &mut source,
+            Some("master@7649ced6cd25865874d787ec1a9abbc67b068729"),
+        );
+        assert_eq!(
+            source.commit.as_deref(),
+            Some("7649ced6cd25865874d787ec1a9abbc67b068729")
+        );
+        assert_eq!(source.branch, None);
+    }
+
+    #[test]
+    fn installed_commit_ref_becomes_a_commit_pin() {
+        let mut source = crate::app::mod_downloads::ModDownloadSource::default();
+        pin_source_to_installed_ref(
+            &mut source,
+            Some("commit@bfd167f7a52dfa6c9e694955a074a85991b0c358"),
+        );
+        assert_eq!(
+            source.commit.as_deref(),
+            Some("bfd167f7a52dfa6c9e694955a074a85991b0c358")
+        );
+        assert_eq!(source.branch, None);
+    }
+
+    #[test]
+    fn tag_source_keeps_its_tag() {
+        let mut source = crate::app::mod_downloads::ModDownloadSource {
+            tag: Some("v1.2.0".to_string()),
+            ..Default::default()
+        };
+        pin_source_to_installed_ref(&mut source, Some("v1.2.0"));
+        assert_eq!(source.tag.as_deref(), Some("v1.2.0"));
+        assert_eq!(source.commit, None);
+        assert_eq!(source.branch, None);
+    }
+
+    #[test]
+    fn tag_with_at_sign_is_not_a_commit_pin() {
+        let mut source = crate::app::mod_downloads::ModDownloadSource {
+            tag: Some("mymod@1.0".to_string()),
+            ..Default::default()
+        };
+        pin_source_to_installed_ref(&mut source, Some("mymod@1.0"));
+        assert_eq!(source.tag.as_deref(), Some("mymod@1.0"));
+        assert_eq!(source.commit, None);
+        assert_eq!(source.branch, None);
+    }
+
+    #[test]
+    fn missing_ref_leaves_the_source_untouched() {
+        let mut source = crate::app::mod_downloads::ModDownloadSource {
+            branch: Some("master".to_string()),
+            ..Default::default()
+        };
+        pin_source_to_installed_ref(&mut source, None);
+        assert_eq!(source.branch.as_deref(), Some("master"));
+        assert_eq!(source.commit, None);
+    }
+
+    #[test]
+    fn serialized_block_carries_the_pinned_commit_and_no_branch() {
+        let mut source = crate::app::mod_downloads::ModDownloadSource {
+            source_id: "gibberlings3".to_string(),
+            source_label: "Gibberlings3".to_string(),
+            url: "https://github.com/Gibberlings3/Tweaks-Anthology".to_string(),
+            github: Some("Gibberlings3/Tweaks-Anthology".to_string()),
+            branch: Some("master".to_string()),
+            ..Default::default()
+        };
+        pin_source_to_installed_ref(
+            &mut source,
+            Some("master@7649ced6cd25865874d787ec1a9abbc67b068729"),
+        );
+        let block = serialize_resolved_source_block(&source);
+        assert!(block.contains("commit = \"7649ced6cd25865874d787ec1a9abbc67b068729\""));
+        assert!(!block.contains("branch = "));
     }
 
     #[test]

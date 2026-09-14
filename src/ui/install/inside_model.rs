@@ -182,7 +182,7 @@ fn display_version(
     }
     installed_refs
         .get(&normalize_mod_download_tp2(&component.tp_file))
-        .map(|value| short_ref(value))
+        .and_then(|value| installed_ref_label(value))
         .unwrap_or_default()
 }
 
@@ -197,24 +197,19 @@ fn pin_label(source: &ModDownloadSource) -> Option<String> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let commit = source
-        .commit
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
     tag.map(str::to_string)
-        .or_else(|| branch.map(str::to_string))
-        .or_else(|| commit.map(short_ref))
+        .or_else(|| branch.map(|branch| format!("branch: {branch}")))
 }
 
-fn short_ref(value: &str) -> String {
+fn installed_ref_label(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    let looks_like_sha = trimmed.len() >= 20 && trimmed.chars().all(|c| c.is_ascii_hexdigit());
-    if looks_like_sha {
-        trimmed[..7].to_string()
-    } else {
-        trimmed.to_string()
+    if trimmed.is_empty() || trimmed.starts_with("commit@") {
+        return None;
     }
+    if let Some((branch, _)) = trimmed.split_once('@') {
+        return Some(format!("branch: {branch}"));
+    }
+    Some(trimmed.to_string())
 }
 
 fn component_label(component: &Component) -> String {
@@ -509,11 +504,11 @@ tp2 = "cdtweaks"
 
         let groups = parse_section(text, &tiers, &empty_refs());
 
-        assert_eq!(groups[0].version, "master");
+        assert_eq!(groups[0].version, "branch: master");
     }
 
     #[test]
-    fn group_version_shortens_a_commit_pin() {
+    fn group_version_hides_a_commit_pin() {
         let modlist_toml = r#"[[mods]]
 tp2 = "eeex"
 
@@ -530,7 +525,7 @@ tp2 = "eeex"
 
         let groups = parse_section(text, &tiers, &empty_refs());
 
-        assert_eq!(groups[0].version, "a1b2c3d");
+        assert_eq!(groups[0].version, "");
     }
 
     #[test]
@@ -538,17 +533,25 @@ tp2 = "eeex"
         let text = "~EEEX\\EEEX.TP2~ #0 #0 // EEex";
 
         let mut refs = empty_refs();
-        refs.insert("eeex".to_string(), "v5.2".to_string());
+        refs.insert("eeex".to_string(), "v1.2.0".to_string());
         let groups = parse_section(text, &empty_tiers(), &refs);
-        assert_eq!(groups[0].version, "v5.2");
+        assert_eq!(groups[0].version, "v1.2.0");
+    }
 
-        let mut refs = empty_refs();
-        refs.insert(
-            "eeex".to_string(),
-            "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678".to_string(),
+    #[test]
+    fn installed_branch_ref_shows_the_branch_name() {
+        assert_eq!(
+            installed_ref_label("master@7649ced6cd25"),
+            Some("branch: master".to_string())
         );
-        let groups = parse_section(text, &empty_tiers(), &refs);
-        assert_eq!(groups[0].version, "a1b2c3d");
+    }
+
+    #[test]
+    fn installed_commit_ref_shows_nothing() {
+        assert_eq!(
+            installed_ref_label("commit@bfd167f7a52dfa6c9e694955a074a85991b0c358"),
+            None
+        );
     }
 
     #[test]

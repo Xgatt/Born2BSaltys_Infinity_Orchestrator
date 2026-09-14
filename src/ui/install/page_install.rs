@@ -119,6 +119,9 @@ fn details_stage(
     header
         .source_compat_issue
         .clone_from(&orchestrator.install_screen_state.source_compat_issue);
+    header
+        .source_residue_issue
+        .clone_from(&orchestrator.install_screen_state.source_residue_issue);
     let mut fork_info_open = orchestrator.install_screen_state.fork_info_open;
 
     let outcome = stage_details::render(
@@ -453,6 +456,9 @@ pub(crate) fn refresh_source_compat_issue(
         .parsed_preview
         .as_ref()
         .and_then(|preview| crate::app::compat_dlc_source::preview_issue(step1, preview));
+    state.source_residue_issue = state.parsed_preview.as_ref().and_then(|preview| {
+        crate::app::compat_dlc_source::residue_issue(step1, &preview.game_install)
+    });
 }
 
 #[cfg(test)]

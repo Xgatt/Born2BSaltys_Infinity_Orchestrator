@@ -52,6 +52,7 @@ pub(crate) struct FactRow {
 
 pub(crate) struct DetailsHeader {
     pub(crate) source_compat_issue: Option<SourceNotice>,
+    pub(crate) source_residue_issue: Option<SourceNotice>,
     pub(crate) name: String,
     pub(crate) author: Option<String>,
     pub(crate) version: Option<String>,
@@ -81,6 +82,7 @@ impl DetailsHeader {
             lineage: preview.forked_from.clone(),
             back_label: "All modlists",
             source_compat_issue: None,
+            source_residue_issue: None,
         }
     }
 
@@ -123,6 +125,7 @@ impl DetailsHeader {
             requirements: requirements_for(game).to_string(),
             built_with: non_empty(&preview.bio_version),
             source_compat_issue: None,
+            source_residue_issue: None,
             lineage: preview.forked_from.clone(),
             back_label: if matches!(origin, ReviewOrigin::Paste) {
                 "Back"
@@ -346,6 +349,18 @@ fn body_columns(
             |ui| {
                 ui.set_width(prose_w);
                 if let Some(notice) = &header.source_compat_issue {
+                    stage_review::render_source_notice(
+                        ui,
+                        palette,
+                        notice,
+                        stage_review::source_warning_action(
+                            availability == ModifyAvailability::OnlyInstall,
+                            availability == ModifyAvailability::OnlyModify,
+                        ),
+                    );
+                    ui.add_space(16.0);
+                }
+                if let Some(notice) = &header.source_residue_issue {
                     stage_review::render_source_notice(
                         ui,
                         palette,

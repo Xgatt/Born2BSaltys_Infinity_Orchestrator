@@ -234,6 +234,16 @@ pub(crate) fn render_install_settings(
         ui.add_space(16.0);
     }
 
+    if let Some(notice) = state.source_residue_issue.clone() {
+        render_source_notice(
+            ui,
+            palette,
+            &notice,
+            source_warning_action(locked, state.review.modify),
+        );
+        ui.add_space(16.0);
+    }
+
     if locked {
         fact_row(ui, palette, "install mode", REINSTALL_MODE_FACT);
         return;
@@ -306,6 +316,7 @@ pub(crate) const fn source_warning_action(locked: bool, modify_on: bool) -> Sour
 
 const SOURCE_WARNING_TITLE_ORDER_MERGER: &str = "DLC Merger required";
 const SOURCE_WARNING_TITLE_CHANGE_SOURCE: &str = "BGEE source mismatch";
+const SOURCE_WARNING_TITLE_CLEAN_SOURCE: &str = "Modded game source";
 const SOURCE_WARNING_ACTION_REINSTALL: &str = "This list cannot be reinstalled as provided. Use Create to make a modified copy with DLC Merger first in the BGEE installation order.";
 const SOURCE_WARNING_ACTION_CHOOSE_MODIFY: &str = "Choose \"Yes, review and modify\" when you install, then put DLC Merger first in the BGEE installation order.";
 const SOURCE_WARNING_ACTION_MODIFY_ON: &str =
@@ -313,12 +324,14 @@ const SOURCE_WARNING_ACTION_MODIFY_ON: &str =
 const SOURCE_WARNING_ACTION_REINSTALL_CHANGE_SOURCE: &str = "This list cannot be reinstalled against this BGEE source. Point Settings at a source that matches the list, then reinstall.";
 const SOURCE_WARNING_ACTION_CHOOSE_MODIFY_CHANGE_SOURCE: &str = "Choose \"Yes, review and modify\" to remove DLC Merger, or point Settings at a BGEE source that matches the list.";
 const SOURCE_WARNING_ACTION_MODIFY_ON_CHANGE_SOURCE: &str = "Once the workspace opens, remove DLC Merger, or point Settings at a BGEE source that matches the list.";
+const SOURCE_WARNING_ACTION_CLEAN_SOURCE: &str = "Mods already in the source can conflict with this list. Point Settings at a clean install, or proceed anyway.";
 
 #[must_use]
 pub(crate) const fn source_warning_title(remedy: SourceRemedy) -> &'static str {
     match remedy {
         SourceRemedy::OrderMerger => SOURCE_WARNING_TITLE_ORDER_MERGER,
         SourceRemedy::ChangeSource => SOURCE_WARNING_TITLE_CHANGE_SOURCE,
+        SourceRemedy::CleanSource => SOURCE_WARNING_TITLE_CLEAN_SOURCE,
     }
 }
 
@@ -346,6 +359,7 @@ pub(crate) const fn source_warning_action_text(
         (SourceRemedy::ChangeSource, SourceWarningAction::ModifyOn) => {
             SOURCE_WARNING_ACTION_MODIFY_ON_CHANGE_SOURCE
         }
+        (SourceRemedy::CleanSource, _) => SOURCE_WARNING_ACTION_CLEAN_SOURCE,
     }
 }
 
@@ -422,7 +436,7 @@ pub(crate) fn render_source_notice(
     action: SourceWarningAction,
 ) {
     if notice.severity == SourceNoticeSeverity::Warning {
-        render_source_warning(ui, notice.text, action, notice.remedy);
+        render_source_warning(ui, &notice.text, action, notice.remedy);
         return;
     }
     egui::Frame::default()
@@ -442,7 +456,7 @@ pub(crate) fn render_source_notice(
             ui.set_width(ui.available_width());
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(notice.text)
+                    egui::RichText::new(notice.text.clone())
                         .size(14.0)
                         .family(egui::FontFamily::Name("poppins_light".into()))
                         .color(redesign_text_primary(palette)),
@@ -626,7 +640,7 @@ mod tests {
         assert!(!begin_disabled_for(&state, &checks));
         state.source_compat_issue = Some(SourceNotice {
             severity: SourceNoticeSeverity::Warning,
-            text: "DLC Merger required",
+            text: "DLC Merger required".to_string(),
             remedy: SourceRemedy::OrderMerger,
         });
         assert!(begin_disabled_for(&state, &checks));
@@ -637,10 +651,35 @@ mod tests {
         assert!(state.source_compat_issue.is_none());
         state.source_compat_issue = Some(SourceNotice {
             severity: SourceNoticeSeverity::Info,
-            text: "Needs Siege of Dragonspear",
+            text: "Needs Siege of Dragonspear".to_string(),
             remedy: SourceRemedy::OrderMerger,
         });
         state.review.modify = false;
+        assert!(!begin_disabled_for(&state, &checks));
+    }
+
+    #[test]
+    fn residue_notice_never_blocks_begin() {
+        let checks = DestinationChecks {
+            ownership: DestinationOwnership::Free,
+            ownership_blocks: false,
+            dest_valid: true,
+            dest_non_empty: false,
+        };
+        let state = InstallScreenState {
+            review: crate::ui::install::state_install::ReviewState {
+                name: "Tactical EET".to_string(),
+                ..Default::default()
+            },
+            import_code: "BIO-MODLIST-V1:CODE".to_string(),
+            source_residue_issue: Some(SourceNotice {
+                severity: SourceNoticeSeverity::Warning,
+                text: "Your BG2EE source at C:\\Games\\test is not a clean install: WeiDU.log."
+                    .to_string(),
+                remedy: SourceRemedy::CleanSource,
+            }),
+            ..Default::default()
+        };
         assert!(!begin_disabled_for(&state, &checks));
     }
 
@@ -894,6 +933,16 @@ mod tests {
             source_warning_action_text(SourceWarningAction::ModifyOn, SourceRemedy::ChangeSource),
             "Once the workspace opens, remove DLC Merger, or point Settings at a BGEE source that matches the list."
         );
+        for action in [
+            SourceWarningAction::Reinstall,
+            SourceWarningAction::ChooseModify,
+            SourceWarningAction::ModifyOn,
+        ] {
+            assert_eq!(
+                source_warning_action_text(action, SourceRemedy::CleanSource),
+                "Mods already in the source can conflict with this list. Point Settings at a clean install, or proceed anyway."
+            );
+        }
     }
 
     #[test]
@@ -905,6 +954,10 @@ mod tests {
         assert_eq!(
             source_warning_title(SourceRemedy::ChangeSource),
             "BGEE source mismatch"
+        );
+        assert_eq!(
+            source_warning_title(SourceRemedy::CleanSource),
+            "Modded game source"
         );
     }
 
