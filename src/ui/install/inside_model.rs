@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
-use crate::app::mod_downloads::{SourceTier, SourceTiers, source_link_label, source_open_url};
+use std::collections::BTreeMap;
+
+use crate::app::app_step2_update_source_refs::ModSourceRefsFile;
+use crate::app::mod_downloads::{
+    ModDownloadSource, SourceTier, SourceTiers, normalize_mod_download_tp2, source_link_label,
+    source_open_url,
+};
 use crate::app::modlist_share::ModlistSharePreview;
 use crate::mods::component::Component;
 use crate::ui::install::preview_counts::distinct_mod_count;
@@ -46,11 +52,12 @@ pub(crate) enum ResolvedSource {
 }
 
 pub(crate) fn build(preview: &ModlistSharePreview, tiers: &SourceTiers) -> InsideModel {
+    let installed_refs = installed_refs_map(&preview.installed_refs_text);
     let sections = section_texts(preview)
         .into_iter()
         .map(|(game, text)| GameSection {
             game,
-            mods: parse_section(text, tiers),
+            mods: parse_section(text, tiers, &installed_refs),
         })
         .collect();
 
@@ -117,7 +124,11 @@ pub(crate) fn filter_section(section: &GameSection, query_lower: &str) -> Vec<(u
         .collect()
 }
 
-fn parse_section(text: &str, tiers: &SourceTiers) -> Vec<ModGroup> {
+fn parse_section(
+    text: &str,
+    tiers: &SourceTiers,
+    installed_refs: &BTreeMap<String, String>,
+) -> Vec<ModGroup> {
     let mut groups: Vec<ModGroup> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -139,15 +150,71 @@ fn parse_section(text: &str, tiers: &SourceTiers) -> Vec<ModGroup> {
             last.components.push(row);
             continue;
         }
+        let resolved = tiers.resolve(&component.tp_file);
         groups.push(ModGroup {
             folder: component.name.clone(),
             tp_file: component.tp_file.clone(),
-            version: component.version.clone(),
-            source: resolve_source(tiers, &component.tp_file),
+            version: display_version(&component, resolved.as_ref(), installed_refs),
+            source: resolve_source(resolved),
             components: vec![row],
         });
     }
     groups
+}
+
+fn installed_refs_map(text: &str) -> BTreeMap<String, String> {
+    toml::from_str::<ModSourceRefsFile>(text)
+        .map(|file| file.refs)
+        .unwrap_or_default()
+}
+
+fn display_version(
+    component: &Component,
+    resolved: Option<&(ModDownloadSource, SourceTier)>,
+    installed_refs: &BTreeMap<String, String>,
+) -> String {
+    let log_version = component.version.trim();
+    if !log_version.is_empty() {
+        return log_version.to_string();
+    }
+    if let Some(pin) = resolved.and_then(|(source, _)| pin_label(source)) {
+        return pin;
+    }
+    installed_refs
+        .get(&normalize_mod_download_tp2(&component.tp_file))
+        .map(|value| short_ref(value))
+        .unwrap_or_default()
+}
+
+fn pin_label(source: &ModDownloadSource) -> Option<String> {
+    let tag = source
+        .tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let branch = source
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let commit = source
+        .commit
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    tag.map(str::to_string)
+        .or_else(|| branch.map(str::to_string))
+        .or_else(|| commit.map(short_ref))
+}
+
+fn short_ref(value: &str) -> String {
+    let trimmed = value.trim();
+    let looks_like_sha = trimmed.len() >= 20 && trimmed.chars().all(|c| c.is_ascii_hexdigit());
+    if looks_like_sha {
+        trimmed[..7].to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn component_label(component: &Component) -> String {
@@ -161,8 +228,8 @@ fn component_label(component: &Component) -> String {
     }
 }
 
-fn resolve_source(tiers: &SourceTiers, tp_file: &str) -> ResolvedSource {
-    let Some((source, tier)) = tiers.resolve(tp_file) else {
+fn resolve_source(resolved: Option<(ModDownloadSource, SourceTier)>) -> ResolvedSource {
+    let Some((source, tier)) = resolved else {
         return ResolvedSource::None;
     };
     let Some(url) = source_open_url(&source) else {
@@ -201,6 +268,10 @@ mod tests {
 
     fn empty_tiers() -> SourceTiers {
         source_tiers_from_texts("", "", "")
+    }
+
+    fn empty_refs() -> BTreeMap<String, String> {
+        BTreeMap::new()
     }
 
     #[test]
@@ -248,7 +319,7 @@ mod tests {
 ~A\\A.TP2~ #0 #1 // A comp two: v1
 ~B\\B.TP2~ #0 #0 // B comp one: v1
 ~A\\A.TP2~ #0 #2 // A comp three: v1";
-        let groups = parse_section(text, &empty_tiers());
+        let groups = parse_section(text, &empty_tiers(), &empty_refs());
 
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].folder, "A");
@@ -262,7 +333,7 @@ mod tests {
     #[test]
     fn component_label_joins_the_subcomponent_with_an_arrow() {
         let text = "~EET/EET.TP2~ #0 #0 // EET core (resource importation)->Default: v14.0";
-        let groups = parse_section(text, &empty_tiers());
+        let groups = parse_section(text, &empty_tiers(), &empty_refs());
 
         assert_eq!(
             groups[0].components[0].label,
@@ -273,7 +344,7 @@ mod tests {
     #[test]
     fn wlb_inputs_ride_on_the_component_row() {
         let text = r"~EET\EET.TP2~ #0 #0 // EET core: v14.0 // @wlb-inputs: y,D:\test1";
-        let groups = parse_section(text, &empty_tiers());
+        let groups = parse_section(text, &empty_tiers(), &empty_refs());
 
         assert_eq!(
             groups[0].components[0].wlb_inputs.as_deref(),
@@ -289,7 +360,7 @@ mod tests {
 ~A\\A.TP2~ #0 #0 // A comp one: v1
 
 // trailing comment";
-        let groups = parse_section(text, &empty_tiers());
+        let groups = parse_section(text, &empty_tiers(), &empty_refs());
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].components.len(), 1);
@@ -364,7 +435,7 @@ mod tests {
         let default_text = "[[mods]]\nname = \"EET\"\ntp2 = \"eet\"\n\n  [[mods.sources]]\n  id = \"main\"\n  label = \"Main\"\n  type = \"github\"\n  url = \"https://github.com/Owner/Repo\"\n";
         let tiers = source_tiers_from_texts(default_text, "", "");
 
-        let known = resolve_source(&tiers, "EET.TP2");
+        let known = resolve_source(tiers.resolve("EET.TP2"));
         assert_eq!(
             known,
             ResolvedSource::Link {
@@ -374,7 +445,118 @@ mod tests {
             }
         );
 
-        let unknown = resolve_source(&tiers, "UNKNOWN.TP2");
+        let unknown = resolve_source(tiers.resolve("UNKNOWN.TP2"));
         assert_eq!(unknown, ResolvedSource::None);
+    }
+
+    #[test]
+    fn group_version_prefers_the_log_line_version() {
+        let modlist_toml = r#"[[mods]]
+tp2 = "eeex"
+
+  [[mods.sources]]
+  id = "bubb13"
+  label = "Bubb13"
+  type = "github"
+  url = "https://github.com/Bubb13/EEex"
+  repo = "Bubb13/EEex"
+  tag = "v1.2.0"
+"#;
+        let tiers = source_tiers_from_texts("", "", modlist_toml);
+        let text = "~EEEX\\EEEX.TP2~ #0 #0 // EEex: v1.1.0";
+
+        let groups = parse_section(text, &tiers, &empty_refs());
+
+        assert_eq!(groups[0].version, "v1.1.0");
+    }
+
+    #[test]
+    fn group_version_falls_back_to_the_tag_pin() {
+        let modlist_toml = r#"[[mods]]
+tp2 = "eeex"
+
+  [[mods.sources]]
+  id = "bubb13"
+  label = "Bubb13"
+  type = "github"
+  url = "https://github.com/Bubb13/EEex"
+  repo = "Bubb13/EEex"
+  tag = "v1.2.0"
+"#;
+        let tiers = source_tiers_from_texts("", "", modlist_toml);
+        let text = "~EEEX\\EEEX.TP2~ #0 #0 // EEex";
+
+        let groups = parse_section(text, &tiers, &empty_refs());
+
+        assert_eq!(groups[0].version, "v1.2.0");
+    }
+
+    #[test]
+    fn group_version_shows_the_branch_pin_by_name() {
+        let modlist_toml = r#"[[mods]]
+tp2 = "cdtweaks"
+
+  [[mods.sources]]
+  id = "gibberlings3"
+  label = "Gibberlings3"
+  type = "github"
+  url = "https://github.com/Gibberlings3/Tweaks-Anthology"
+  repo = "Gibberlings3/Tweaks-Anthology"
+  branch = "master"
+"#;
+        let tiers = source_tiers_from_texts("", "", modlist_toml);
+        let text = "~CDTWEAKS\\CDTWEAKS.TP2~ #0 #0 // CDTweaks";
+
+        let groups = parse_section(text, &tiers, &empty_refs());
+
+        assert_eq!(groups[0].version, "master");
+    }
+
+    #[test]
+    fn group_version_shortens_a_commit_pin() {
+        let modlist_toml = r#"[[mods]]
+tp2 = "eeex"
+
+  [[mods.sources]]
+  id = "bubb13"
+  label = "Bubb13"
+  type = "github"
+  url = "https://github.com/Bubb13/EEex"
+  repo = "Bubb13/EEex"
+  commit = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+"#;
+        let tiers = source_tiers_from_texts("", "", modlist_toml);
+        let text = "~EEEX\\EEEX.TP2~ #0 #0 // EEex";
+
+        let groups = parse_section(text, &tiers, &empty_refs());
+
+        assert_eq!(groups[0].version, "a1b2c3d");
+    }
+
+    #[test]
+    fn group_version_falls_back_to_the_installed_ref() {
+        let text = "~EEEX\\EEEX.TP2~ #0 #0 // EEex";
+
+        let mut refs = empty_refs();
+        refs.insert("eeex".to_string(), "v5.2".to_string());
+        let groups = parse_section(text, &empty_tiers(), &refs);
+        assert_eq!(groups[0].version, "v5.2");
+
+        let mut refs = empty_refs();
+        refs.insert(
+            "eeex".to_string(),
+            "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678".to_string(),
+        );
+        let groups = parse_section(text, &empty_tiers(), &refs);
+        assert_eq!(groups[0].version, "a1b2c3d");
+    }
+
+    #[test]
+    fn group_version_is_empty_without_any_source() {
+        let text = "~EEEX\\EEEX.TP2~ #0 #0 // EEex";
+
+        let groups = parse_section(text, &empty_tiers(), &empty_refs());
+
+        assert_eq!(groups[0].version, "");
     }
 }

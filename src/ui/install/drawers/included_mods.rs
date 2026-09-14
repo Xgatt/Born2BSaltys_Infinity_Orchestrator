@@ -352,37 +352,27 @@ fn render_group_head(
                     redesign_text_primary(palette),
                     palette,
                 );
+                if !group.version.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(&group.version)
+                            .size(13.0)
+                            .family(egui::FontFamily::Name("poppins_light".into()))
+                            .color(redesign_text_muted(palette)),
+                    );
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     render_source_button(ui, palette, &group.source, &group.folder);
                     ui.add_space(8.0);
-                    render_version_tp_line(ui, palette, group, query_lower);
+                    render_tp_line(ui, palette, group, query_lower);
                 });
             });
         });
 }
 
-fn render_version_tp_line(
-    ui: &mut egui::Ui,
-    palette: ThemePalette,
-    group: &ModGroup,
-    query_lower: &str,
-) {
+fn render_tp_line(ui: &mut egui::Ui, palette: ThemePalette, group: &ModGroup, query_lower: &str) {
     ui.horizontal(|ui| {
-        if !group.version.is_empty() {
-            ui.label(
-                egui::RichText::new(&group.version)
-                    .size(11.0)
-                    .family(egui::FontFamily::Name("firacode_nerd".into()))
-                    .color(redesign_text_muted(palette)),
-            );
-            ui.label(
-                egui::RichText::new("\u{00B7}")
-                    .size(11.0)
-                    .family(egui::FontFamily::Name("firacode_nerd".into()))
-                    .color(redesign_text_muted(palette)),
-            );
-        }
         highlight_label(
             ui,
             &group.tp_file,
