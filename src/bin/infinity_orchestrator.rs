@@ -69,6 +69,18 @@ fn main() -> Result<()> {
         }
     }
 
+    match bio::settings::launch_cleanup::clear_unreachable_eet_sources_in_file(&settings_store) {
+        Ok(true) => tracing::info!(
+            target = "orchestrator",
+            "cleared unreachable EET source fields from bio_settings.json"
+        ),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(
+            target = "orchestrator",
+            "clearing unreachable EET source fields from bio_settings.json failed: {err}"
+        ),
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])

@@ -56,16 +56,13 @@ fn field_role(field: &str) -> FieldRole {
 pub fn run_now(step1: &Step1State) -> ValidationReport {
     let mut report = ValidationReport::default();
 
-    let folder_fields: [(&'static str, &str); 9] = [
+    let folder_fields: [(&'static str, &str); 6] = [
         (FIELD_BGEE_GAME_FOLDER, &step1.bgee_game_folder),
         (FIELD_BG2EE_GAME_FOLDER, &step1.bg2ee_game_folder),
         (FIELD_IWDEE_GAME_FOLDER, &step1.iwdee_game_folder),
-        (FIELD_EET_BGEE_GAME_FOLDER, &step1.eet_bgee_game_folder),
-        (FIELD_EET_BG2EE_GAME_FOLDER, &step1.eet_bg2ee_game_folder),
         (FIELD_GLOBAL_MODS_FOLDER, &step1.global_mods_folder),
         (FIELD_MODS_ARCHIVE_FOLDER, &step1.mods_archive_folder),
         (FIELD_MODS_BACKUP_FOLDER, &step1.mods_backup_folder),
-        (FIELD_WEIDU_LOG_FOLDER, &step1.weidu_log_folder),
     ];
     for (name, value) in &folder_fields {
         report.fields.insert(*name, check_path(name, value));
@@ -241,7 +238,8 @@ pub fn resolve_on_path(name: &str) -> Option<std::path::PathBuf> {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{FIELD_BGEE_GAME_FOLDER, PathStatus, check_path};
+    use super::{FIELD_BGEE_GAME_FOLDER, PathStatus, check_path, run_now};
+    use crate::app::state::Step1State;
 
     struct TempFixture {
         path: std::path::PathBuf,
@@ -284,6 +282,29 @@ mod tests {
             PathStatus::Ok {
                 detail: Some("clean install \u{00B7} SoD not found".to_string())
             }
+        );
+    }
+
+    #[test]
+    fn hidden_eet_fields_never_count_as_issues() {
+        let missing = std::env::temp_dir().join("bio_validate_now_test_missing_eet_bg2ee");
+        let step1 = Step1State {
+            eet_bg2ee_game_folder: missing.display().to_string(),
+            weidu_binary: String::new(),
+            mod_installer_binary: String::new(),
+            ..Step1State::default()
+        };
+        let report = run_now(&step1);
+        assert_eq!(report.issue_count, 0);
+        assert!(
+            !report
+                .fields
+                .contains_key(super::FIELD_EET_BGEE_GAME_FOLDER)
+        );
+        assert!(
+            !report
+                .fields
+                .contains_key(super::FIELD_EET_BG2EE_GAME_FOLDER)
         );
     }
 }
