@@ -14,9 +14,6 @@ pub struct CreateScreenState {
 
     pub resumed_build_id: Option<String>,
 
-    pub load_draft_copied_name: Option<String>,
-    pub load_draft_copied_until: Option<std::time::Instant>,
-
     pub load_draft_delete_target: Option<String>,
 }
 

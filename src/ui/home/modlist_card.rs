@@ -28,11 +28,97 @@ pub enum ModlistCardActions {
     EditModlist,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardMenu {
+    Full,
+    DraftPicker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CardMenuEntry {
+    pub label: &'static str,
+    pub action: ModlistCardActions,
+    pub danger: bool,
+}
+
+#[must_use]
+pub fn menu_entries(state: ModlistState, menu: CardMenu) -> Vec<CardMenuEntry> {
+    match (state, menu) {
+        (ModlistState::InProgress, CardMenu::Full) => vec![
+            CardMenuEntry {
+                label: "Share this modlist",
+                action: ModlistCardActions::ShareModlist,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Edit modlist",
+                action: ModlistCardActions::EditModlist,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Delete",
+                action: ModlistCardActions::Delete,
+                danger: true,
+            },
+        ],
+        (ModlistState::InProgress, CardMenu::DraftPicker) => vec![CardMenuEntry {
+            label: "Delete",
+            action: ModlistCardActions::Delete,
+            danger: true,
+        }],
+        (ModlistState::Installed, CardMenu::Full) => vec![
+            CardMenuEntry {
+                label: "Share this modlist",
+                action: ModlistCardActions::ShareModlist,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Open install folder",
+                action: ModlistCardActions::OpenInstallFolder,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Edit modlist",
+                action: ModlistCardActions::EditModlist,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Reinstall",
+                action: ModlistCardActions::Reinstall,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Delete",
+                action: ModlistCardActions::Delete,
+                danger: true,
+            },
+        ],
+        (ModlistState::Installed, CardMenu::DraftPicker) => vec![
+            CardMenuEntry {
+                label: "Open install folder",
+                action: ModlistCardActions::OpenInstallFolder,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Reinstall",
+                action: ModlistCardActions::Reinstall,
+                danger: false,
+            },
+            CardMenuEntry {
+                label: "Delete",
+                action: ModlistCardActions::Delete,
+                danger: true,
+            },
+        ],
+    }
+}
+
 #[must_use]
 pub fn render(
     ui: &mut egui::Ui,
     palette: ThemePalette,
     entry: &ModlistEntry,
+    menu: CardMenu,
 ) -> ModlistCardActions {
     let mut action = ModlistCardActions::None;
 
@@ -74,7 +160,7 @@ pub fn render(
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                action = render_action_cluster(ui, palette, entry);
+                action = render_action_cluster(ui, palette, entry, menu);
             });
         });
     });
@@ -115,27 +201,32 @@ fn render_action_cluster(
     ui: &mut egui::Ui,
     palette: ThemePalette,
     entry: &ModlistEntry,
+    menu: CardMenu,
 ) -> ModlistCardActions {
     use std::cell::Cell;
 
     let picked: Cell<ModlistCardActions> = Cell::new(ModlistCardActions::None);
     ui.spacing_mut().item_spacing.x = 6.0;
 
+    let entries = menu_entries(entry.state, menu);
+    let picked_ref = &picked;
+    let mut items: Vec<KebabItem<'_>> = entries
+        .into_iter()
+        .map(|menu_entry| {
+            let action = menu_entry.action;
+            if menu_entry.danger {
+                KebabItem::danger(menu_entry.label, move || picked_ref.set(action))
+            } else {
+                KebabItem::new(menu_entry.label, move || picked_ref.set(action))
+            }
+        })
+        .collect();
+    let kebab_h = redesign_btn_height(ui, true);
+    render_kebab(ui, palette, &entry.id, &mut items, kebab_h);
+    drop(items);
+
     match entry.state {
         ModlistState::InProgress => {
-            let mut items = vec![
-                KebabItem::new("Share this modlist", || {
-                    picked.set(ModlistCardActions::ShareModlist);
-                }),
-                KebabItem::new("Edit modlist", || {
-                    picked.set(ModlistCardActions::EditModlist);
-                }),
-                KebabItem::danger("Delete", || picked.set(ModlistCardActions::Delete)),
-            ];
-            let kebab_h = redesign_btn_height(ui, true);
-            render_kebab(ui, palette, &entry.id, &mut items, kebab_h);
-            drop(items);
-
             if redesign_btn(
                 ui,
                 palette,
@@ -152,23 +243,6 @@ fn render_action_cluster(
             }
         }
         ModlistState::Installed => {
-            let mut items = vec![
-                KebabItem::new("Share this modlist", || {
-                    picked.set(ModlistCardActions::ShareModlist);
-                }),
-                KebabItem::new("Open install folder", || {
-                    picked.set(ModlistCardActions::OpenInstallFolder);
-                }),
-                KebabItem::new("Edit modlist", || {
-                    picked.set(ModlistCardActions::EditModlist);
-                }),
-                KebabItem::new("Reinstall", || picked.set(ModlistCardActions::Reinstall)),
-                KebabItem::danger("Delete", || picked.set(ModlistCardActions::Delete)),
-            ];
-            let kebab_h = redesign_btn_height(ui, true);
-            render_kebab(ui, palette, &entry.id, &mut items, kebab_h);
-            drop(items);
-
             if redesign_btn(
                 ui,
                 palette,
@@ -283,5 +357,47 @@ mod tests {
         assert_eq!(human_size(512), "512 B");
         assert_eq!(human_size(2048), "2.0 KB");
         assert_eq!(human_size(5 * 1024 * 1024), "5.0 MB");
+    }
+
+    #[test]
+    fn full_menu_in_progress_keeps_share_edit_delete() {
+        let entries = menu_entries(ModlistState::InProgress, CardMenu::Full);
+        let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
+        assert_eq!(labels, ["Share this modlist", "Edit modlist", "Delete"]);
+        assert!(entries.last().unwrap().danger);
+        assert_eq!(entries[0].action, ModlistCardActions::ShareModlist);
+        assert_eq!(entries[1].action, ModlistCardActions::EditModlist);
+        assert_eq!(entries[2].action, ModlistCardActions::Delete);
+    }
+
+    #[test]
+    fn full_menu_installed_keeps_all_five() {
+        let entries = menu_entries(ModlistState::Installed, CardMenu::Full);
+        let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
+        assert_eq!(
+            labels,
+            [
+                "Share this modlist",
+                "Open install folder",
+                "Edit modlist",
+                "Reinstall",
+                "Delete"
+            ]
+        );
+    }
+
+    #[test]
+    fn draft_picker_in_progress_is_delete_only() {
+        let entries = menu_entries(ModlistState::InProgress, CardMenu::DraftPicker);
+        let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
+        assert_eq!(labels, ["Delete"]);
+        assert!(entries[0].danger);
+    }
+
+    #[test]
+    fn draft_picker_installed_hides_share_and_edit() {
+        let entries = menu_entries(ModlistState::Installed, CardMenu::DraftPicker);
+        let labels: Vec<&str> = entries.iter().map(|e| e.label).collect();
+        assert_eq!(labels, ["Open install folder", "Reinstall", "Delete"]);
     }
 }

@@ -3,17 +3,17 @@
 
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use eframe::egui;
 use tracing::warn;
 
+use crate::install_runtime::replaced_owners::{self, HeldOwners};
 use crate::install_runtime::{destination_prep, per_install_dirs};
 use crate::registry::destination_claim::{
     ClaimContext, DestinationClaim, resolve_destination_claim,
 };
 use crate::registry::model::Game;
-use crate::registry::operations::{self, remove_entry_keep_folder};
 use crate::registry::operations_create::create_modlist_with_author;
 use crate::registry::store_workspace::WorkspaceStore;
 use crate::registry::workspace_model::{ModlistWorkspaceState, ModsSource};
@@ -24,20 +24,16 @@ use crate::ui::home::confirm_delete;
 use crate::ui::install::state_install::DestChoice;
 use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::{
-    DestinationPrepFlow, OrchestratorApp, PendingCreateStart, PendingFolderDelete,
+    DestinationPrepFlow, OrchestratorApp, PendingCreateStart,
 };
-use crate::ui::orchestrator::widgets::clipboard;
 use crate::ui::orchestrator::widgets::dialogs::confirm_dialog::{self, ConfirmOutcome};
 use crate::ui::shared::redesign_tokens::ThemePalette;
-
-const COPY_CONFIRM_MS: u64 = 1600;
 
 enum CreateRequest {
     StartScratch,
     OpenLoadDraft,
     CloseLoadDraft,
     ResumeWorkspace(String),
-    CopyImportCode(String),
     ArmDeleteDraft(String),
 }
 
@@ -45,13 +41,6 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
     let palette = orchestrator.theme_palette;
 
     poll_create_destination_prep(orchestrator);
-
-    if let Some(deadline) = orchestrator.create_screen_state.load_draft_copied_until
-        && Instant::now() >= deadline
-    {
-        orchestrator.create_screen_state.load_draft_copied_name = None;
-        orchestrator.create_screen_state.load_draft_copied_until = None;
-    }
 
     let mut request = collect_stage_request(ui, palette, orchestrator);
 
@@ -62,7 +51,7 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
     }
 
     if let Some(req) = request {
-        handle_create_request(orchestrator, ctx, req);
+        handle_create_request(orchestrator, req);
     }
 }
 
@@ -90,24 +79,15 @@ fn collect_load_draft_request(
     palette: ThemePalette,
     orchestrator: &OrchestratorApp,
 ) -> Option<CreateRequest> {
-    let copied = orchestrator
-        .create_screen_state
-        .load_draft_copied_name
-        .clone();
-    match load_draft_dialog::render(ctx, palette, &orchestrator.registry, copied.as_deref()) {
+    match load_draft_dialog::render(ctx, palette, &orchestrator.registry) {
         LoadDraftOutcome::Cancelled => Some(CreateRequest::CloseLoadDraft),
         LoadDraftOutcome::Resume(id) => Some(CreateRequest::ResumeWorkspace(id)),
-        LoadDraftOutcome::CopyImportCode(id) => Some(CreateRequest::CopyImportCode(id)),
         LoadDraftOutcome::Delete(id) => Some(CreateRequest::ArmDeleteDraft(id)),
         LoadDraftOutcome::Pending => None,
     }
 }
 
-fn handle_create_request(
-    orchestrator: &mut OrchestratorApp,
-    ctx: &egui::Context,
-    request: CreateRequest,
-) {
+fn handle_create_request(orchestrator: &mut OrchestratorApp, request: CreateRequest) {
     match request {
         CreateRequest::StartScratch => start_scratch(orchestrator),
         CreateRequest::OpenLoadDraft => {
@@ -115,20 +95,15 @@ fn handle_create_request(
         }
         CreateRequest::CloseLoadDraft => {
             orchestrator.create_screen_state.load_draft_open = false;
-            orchestrator.create_screen_state.load_draft_copied_name = None;
-            orchestrator.create_screen_state.load_draft_copied_until = None;
             orchestrator.create_screen_state.load_draft_delete_target = None;
         }
         CreateRequest::ResumeWorkspace(id) => {
             orchestrator.create_screen_state.load_draft_open = false;
-            orchestrator.create_screen_state.load_draft_copied_name = None;
-            orchestrator.create_screen_state.load_draft_copied_until = None;
             orchestrator.create_screen_state.resumed_build_id = Some(id.clone());
             orchestrator.nav = NavDestination::Workspace {
                 modlist_id: Some(id),
             };
         }
-        CreateRequest::CopyImportCode(id) => copy_import_code(orchestrator, ctx, &id),
         CreateRequest::ArmDeleteDraft(id) => {
             orchestrator.create_screen_state.load_draft_delete_target = Some(id);
         }
@@ -155,39 +130,7 @@ fn render_load_draft_delete_confirm(orchestrator: &mut OrchestratorApp, ctx: &eg
     match outcome {
         ConfirmOutcome::Confirmed => {
             orchestrator.create_screen_state.load_draft_delete_target = None;
-            let name = entry.name;
-            match operations::remove_entry_and_save(
-                &id,
-                &orchestrator.registry_store,
-                &mut orchestrator.registry,
-            ) {
-                Ok(Some(target)) => {
-                    orchestrator.persistence_cycle.last_saved_registry =
-                        orchestrator.registry.clone();
-                    orchestrator
-                        .notification_manager
-                        .info(format!("Deleting \"{}\"\u{2026}", target.name));
-                    let rx = operations::spawn_delete_folder_worker(target.dest);
-                    orchestrator
-                        .pending_folder_deletes
-                        .push(PendingFolderDelete {
-                            modlist_name: target.name,
-                            rx,
-                        });
-                }
-                Ok(None) => {
-                    orchestrator.persistence_cycle.last_saved_registry =
-                        orchestrator.registry.clone();
-                    orchestrator
-                        .notification_manager
-                        .success(format!("Deleted \"{name}\""));
-                }
-                Err(err) => {
-                    orchestrator
-                        .notification_manager
-                        .error(format!("Couldn't delete \"{name}\": {err}"));
-                }
-            }
+            crate::ui::home::delete_modlist::delete_confirmed_modlist(orchestrator, &entry);
         }
         ConfirmOutcome::Cancelled => {
             orchestrator.create_screen_state.load_draft_delete_target = None;
@@ -343,7 +286,10 @@ fn pending_create_matches_current(
     ) && pending.game == orchestrator.create_screen_state.game
 }
 
-fn scratch_take_over_if_needed(orchestrator: &mut OrchestratorApp, dest: &str) -> bool {
+fn scratch_claim(
+    orchestrator: &mut OrchestratorApp,
+    dest: &str,
+) -> Result<Option<HeldOwners>, String> {
     let claim = resolve_destination_claim(
         &orchestrator.registry,
         &ClaimContext {
@@ -353,38 +299,22 @@ fn scratch_take_over_if_needed(orchestrator: &mut OrchestratorApp, dest: &str) -
         },
     );
     match claim {
-        DestinationClaim::Free | DestinationClaim::Adopt(_) => true,
-        DestinationClaim::Replace(ids) => {
-            for id in &ids {
-                if let Err(err) = remove_entry_keep_folder(
-                    id,
-                    &orchestrator.registry_store,
-                    &mut orchestrator.registry,
-                ) {
-                    warn!(
-                        target = "orchestrator",
-                        "Create scratch: take-over remove_entry_keep_folder({id}) failed: {err}"
-                    );
-                }
-            }
-            orchestrator.persistence_cycle.last_saved_registry = orchestrator.registry.clone();
-            true
-        }
-        DestinationClaim::Refused(refusal) => {
-            warn!(
-                target = "orchestrator",
-                "Create scratch: refused — {}",
-                refusal.message(&orchestrator.registry)
-            );
-            false
-        }
+        DestinationClaim::Free | DestinationClaim::Adopt(_) => Ok(None),
+        DestinationClaim::Replace(ids) => replaced_owners::hold_owners(orchestrator, &ids)
+            .map(Some)
+            .map_err(|err| format!("the modlist at {dest} could not be replaced: {err}")),
+        DestinationClaim::Refused(refusal) => Err(refusal.message(&orchestrator.registry)),
     }
 }
 
 fn finish_start_scratch(orchestrator: &mut OrchestratorApp, name: &str, game: Game, dest: &str) {
-    if !scratch_take_over_if_needed(orchestrator, dest) {
-        return;
-    }
+    let mut held = match scratch_claim(orchestrator, dest) {
+        Ok(h) => h,
+        Err(msg) => {
+            warn!(target = "orchestrator", "Create scratch: refused — {msg}");
+            return;
+        }
+    };
 
     let scratch_mods_folder = match create_scratch_mods_folder(dest, game) {
         Ok(path) => path,
@@ -393,6 +323,9 @@ fn finish_start_scratch(orchestrator: &mut OrchestratorApp, name: &str, game: Ga
                 target = "orchestrator",
                 "Create: creating scratch mods folder failed: {err}"
             );
+            if let Some(h) = held.take() {
+                replaced_owners::restore_owners(orchestrator, h);
+            }
             return;
         }
     };
@@ -411,6 +344,9 @@ fn finish_start_scratch(orchestrator: &mut OrchestratorApp, name: &str, game: Ga
                 target = "orchestrator",
                 "Create: create_modlist failed: {err}"
             );
+            if let Some(h) = held.take() {
+                replaced_owners::restore_owners(orchestrator, h);
+            }
             return;
         }
     };
@@ -458,6 +394,10 @@ fn finish_start_scratch(orchestrator: &mut OrchestratorApp, name: &str, game: Ga
         .persistence_cycle
         .mark_registry_dirty(Instant::now());
 
+    if let Some(h) = held.take() {
+        replaced_owners::finalize_owners(h, &entry.id);
+    }
+
     let new_id = entry.id;
     orchestrator.create_screen_state.modlist_name.clear();
     orchestrator.create_screen_state.destination.clear();
@@ -486,23 +426,6 @@ fn create_scratch_mods_folder(destination: &str, game: Game) -> Result<String, S
 
 const fn destination_choice_requires_worker(choice: Option<DestChoice>) -> bool {
     matches!(choice, Some(DestChoice::Clear | DestChoice::Backup))
-}
-
-fn copy_import_code(orchestrator: &mut OrchestratorApp, ctx: &egui::Context, id: &str) {
-    let name = orchestrator
-        .registry
-        .find(id)
-        .map_or_else(|| "modlist".to_string(), |e| e.name.clone());
-    if let Some(code) = operations::share_code_for(id, &orchestrator.registry) {
-        clipboard::copy_silent(ctx, code);
-        orchestrator.create_screen_state.load_draft_copied_name = Some(name);
-    } else {
-        orchestrator.create_screen_state.load_draft_copied_name = Some(format!(
-            "{name}\u{201D} \u{2014} no import code yet \u{201C}"
-        ));
-    }
-    orchestrator.create_screen_state.load_draft_copied_until =
-        Some(Instant::now() + Duration::from_millis(COPY_CONFIRM_MS));
 }
 
 #[cfg(test)]
@@ -570,6 +493,92 @@ mod tests {
             record.text, "Imported \"Imported Fork\" \u{2014} ready to edit",
             "toast text must include the imported modlist name"
         );
+    }
+
+    struct TempDestGuard(PathBuf);
+
+    impl TempDestGuard {
+        fn new(tag: &str) -> Self {
+            Self(std::env::temp_dir().join(format!(
+                "bio_create_scratch_test_{tag}_{}",
+                std::process::id()
+            )))
+        }
+
+        fn as_string(&self) -> String {
+            self.0.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for TempDestGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn scratch_take_over_holds_the_old_owner_and_removes_its_data_dir() {
+        let dest = TempDestGuard::new("takeover");
+        let mut app = orch_for_create_test();
+        app.registry.entries.push(ModlistEntry {
+            id: "OLD000000001".to_string(),
+            name: "Old scratch".to_string(),
+            game: Game::EET,
+            destination_folder: dest.as_string(),
+            state: ModlistState::InProgress,
+            ..Default::default()
+        });
+        let old_data_dir = crate::registry::store_workspace::modlist_data_dir("OLD000000001");
+        std::fs::create_dir_all(&old_data_dir).expect("seed the old data dir");
+        app.redesign_settings.user_name = "@tester".to_string();
+
+        finish_start_scratch(&mut app, "Fresh", Game::BGEE, &dest.as_string());
+
+        assert!(app.registry.find("OLD000000001").is_none());
+        assert!(!old_data_dir.exists());
+        let fresh: Vec<_> = app
+            .registry
+            .entries
+            .iter()
+            .filter(|e| e.name == "Fresh")
+            .collect();
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(
+            app.nav,
+            NavDestination::Workspace {
+                modlist_id: Some(fresh[0].id.clone())
+            }
+        );
+    }
+
+    #[test]
+    fn scratch_mint_failure_restores_the_old_owner() {
+        let dest = TempDestGuard::new("mint-failure");
+        std::fs::write(&dest.0, b"blocker").expect("seed a blocking file");
+        let mut app = orch_for_create_test();
+        app.registry.entries.push(ModlistEntry {
+            id: "OLD000000002".to_string(),
+            name: "Old scratch 2".to_string(),
+            game: Game::EET,
+            destination_folder: dest.as_string(),
+            state: ModlistState::InProgress,
+            ..Default::default()
+        });
+        let old_data_dir = crate::registry::store_workspace::modlist_data_dir("OLD000000002");
+        std::fs::create_dir_all(&old_data_dir).expect("seed the old data dir");
+        app.redesign_settings.user_name = "@tester".to_string();
+
+        finish_start_scratch(&mut app, "Fresh 2", Game::BGEE, &dest.as_string());
+
+        let restored = app
+            .registry
+            .entries
+            .iter()
+            .position(|e| e.id == "OLD000000002")
+            .expect("the old owner is restored");
+        assert_eq!(restored, 0);
+        assert!(old_data_dir.exists());
     }
 
     #[test]
