@@ -64,6 +64,10 @@ pub(crate) fn refresh_source_check(step1: &mut Step1State) -> bool {
     true
 }
 
+pub(crate) fn invalidate_source_check(step1: &mut Step1State) {
+    step1.dlc_source_check.probes.clear();
+}
+
 #[must_use]
 pub(crate) fn bgee_source_for<'a>(step1: &'a Step1State, game: &str) -> &'a str {
     if game == "EET" {

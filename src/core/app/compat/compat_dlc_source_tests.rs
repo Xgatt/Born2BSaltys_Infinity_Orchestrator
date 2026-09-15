@@ -12,8 +12,8 @@ use crate::app::state::{Step1State, Step2ComponentState, Step2ModState, Step3Ite
 
 use super::super::compat_step3_rules::{Step3CompatMarker, marker_key};
 use super::{
-    SourceNotice, SourceNoticeSeverity, SourceRemedy, apply_step2, apply_step3, preview_issue,
-    refresh_source_check, residue_issue,
+    SourceNotice, SourceNoticeSeverity, SourceRemedy, apply_step2, apply_step3,
+    invalidate_source_check, preview_issue, refresh_source_check, residue_issue,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -682,6 +682,28 @@ fn residue_issue_names_the_folder_and_findings_for_a_modded_bg2ee() {
         notice.text,
         format!("Your BG2EE source at {root_display} is not a clean install: WeiDU.log.")
     );
+}
+
+#[test]
+fn invalidate_source_check_reprobes_a_folder_cleaned_in_place() {
+    let root = fixture();
+    weidu_log(&root);
+    let mut state = Step1State {
+        bg2ee_game_folder: root.to_string_lossy().into_owned(),
+        game_install: "BG2EE".to_string(),
+        ..Step1State::default()
+    };
+    assert!(refresh_source_check(&mut state));
+    assert!(residue_issue(&state, "BG2EE").is_some());
+    std::fs::remove_file(root.join("WeiDU.log")).expect("clean the folder in place");
+    assert!(!refresh_source_check(&mut state));
+    assert!(
+        residue_issue(&state, "BG2EE").is_some(),
+        "an unchanged path keeps the cached report"
+    );
+    invalidate_source_check(&mut state);
+    assert!(refresh_source_check(&mut state));
+    assert_eq!(residue_issue(&state, "BG2EE"), None);
 }
 
 #[test]

@@ -147,6 +147,9 @@ fn render_validate_on_startup_row(
                 orchestrator.redesign_settings.validate_paths_on_startup = on;
                 orchestrator.redesign_settings_dirty = true;
                 orchestrator.settings_screen_state.path_validation_results = if on {
+                    crate::app::compat_dlc_source::invalidate_source_check(
+                        &mut orchestrator.wizard_state.step1,
+                    );
                     crate::ui::settings::validate_now::run_now(&orchestrator.wizard_state.step1)
                 } else {
                     crate::ui::settings::state_settings::ValidationReport::default()

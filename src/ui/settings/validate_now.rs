@@ -20,6 +20,19 @@ pub const FIELD_WEIDU_LOG_FOLDER: &str = "weidu_log_folder";
 pub const FIELD_WEIDU_BINARY: &str = "weidu_binary";
 pub const FIELD_MOD_INSTALLER_BINARY: &str = "mod_installer_binary";
 
+pub const GAME_FOLDER_FIELDS: [&str; 5] = [
+    FIELD_BGEE_GAME_FOLDER,
+    FIELD_EET_BGEE_GAME_FOLDER,
+    FIELD_BG2EE_GAME_FOLDER,
+    FIELD_EET_BG2EE_GAME_FOLDER,
+    FIELD_IWDEE_GAME_FOLDER,
+];
+
+#[must_use]
+pub fn is_game_folder_field(field: &str) -> bool {
+    GAME_FOLDER_FIELDS.contains(&field)
+}
+
 #[derive(Debug, Clone, Copy)]
 enum FieldRole {
     Game,
