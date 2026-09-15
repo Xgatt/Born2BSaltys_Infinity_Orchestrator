@@ -167,7 +167,7 @@ fn build_verified_code(
         }
     } else {
         let meta = ShareMeta::from_entry(entry_ref, true).with_archive_meta(archive_meta);
-        match share_export::pack_meta(wizard_state, &meta) {
+        match share_export::pack_meta_for_completed_install(wizard_state, &meta) {
             Ok(code) => code,
             Err(err) => {
                 warn!(
@@ -403,6 +403,39 @@ mod tests {
         s.step3.bgee_items = vec![leaf("A.TP2", "0"), leaf("A.TP2", "1")];
         s.step3.bg2ee_items = vec![leaf("B.TP2", "0")];
 
+        let eet_pre_dir = temp_destination("flip_happy_pre");
+        let eet_new_dir = temp_destination("flip_happy_new");
+        let first_game_order_log_dir = temp_destination("flip_happy_bgee_order_log");
+        let second_game_order_log_dir = temp_destination("flip_happy_bg2ee_order_log");
+        std::fs::create_dir_all(&eet_pre_dir).unwrap();
+        std::fs::create_dir_all(&eet_new_dir).unwrap();
+        std::fs::create_dir_all(&first_game_order_log_dir).unwrap();
+        std::fs::create_dir_all(&second_game_order_log_dir).unwrap();
+        std::fs::write(
+            eet_pre_dir.join("WeiDU.log"),
+            "~A/A.TP2~ #0 #0 // comp 0: v9.9\n",
+        )
+        .unwrap();
+        std::fs::write(
+            eet_new_dir.join("WeiDU.log"),
+            "~B/B.TP2~ #0 #0 // comp 0: v3.3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            first_game_order_log_dir.join("weidu.log"),
+            "~A/A.TP2~ #0 #0 // comp 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second_game_order_log_dir.join("weidu.log"),
+            "~B/B.TP2~ #0 #0 // comp 0\n",
+        )
+        .unwrap();
+        s.step1.eet_pre_dir = eet_pre_dir.to_string_lossy().into_owned();
+        s.step1.eet_new_dir = eet_new_dir.to_string_lossy().into_owned();
+        s.step1.eet_bgee_log_folder = first_game_order_log_dir.to_string_lossy().into_owned();
+        s.step1.eet_bg2ee_log_folder = second_game_order_log_dir.to_string_lossy().into_owned();
+
         let rx = flip_to_installed("FLIPME000001", &mut registry, &store, &s, None);
 
         let entry = registry.find("FLIPME000001").expect("entry present");
@@ -429,6 +462,19 @@ mod tests {
             "flip_to_installed must regenerate with allow_auto_install = true"
         );
 
+        let preview = crate::app::modlist_share::preview_modlist_share_code(code)
+            .expect("regenerated code must decode");
+        assert!(
+            preview.bgee_log_text.contains(": v9.9"),
+            "the completed install's real BGEE WeiDU.log tail is baked in: {}",
+            preview.bgee_log_text
+        );
+        assert!(
+            preview.bg2ee_log_text.contains(": v3.3"),
+            "the completed install's real BG2EE WeiDU.log tail is baked in: {}",
+            preview.bg2ee_log_text
+        );
+
         let rx = rx.expect("size worker spawned");
         let (got_id, bytes) = rx
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -437,6 +483,45 @@ mod tests {
         assert_eq!(bytes, 0, "no destination on disk ⇒ 0 bytes");
 
         assert!(path.exists(), "registry written to the temp path");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&eet_pre_dir);
+        let _ = std::fs::remove_dir_all(&eet_new_dir);
+        let _ = std::fs::remove_dir_all(&first_game_order_log_dir);
+        let _ = std::fs::remove_dir_all(&second_game_order_log_dir);
+    }
+
+    #[test]
+    fn flip_without_an_installed_log_falls_back_to_rebuilt_lines() {
+        let (store, path) = temp_registry_store("no_installed_log");
+        let mut registry = ModlistRegistry::default();
+        registry.entries.push(ModlistEntry {
+            id: "FLIPNOLOG001".to_string(),
+            name: "Polished EET".to_string(),
+            game: Game::EET,
+            destination_folder: String::new(),
+            state: ModlistState::InProgress,
+            latest_share_code: Some("BIO-MODLIST-V1:STALE".to_string()),
+            ..Default::default()
+        });
+
+        let s = eet_state_with_leaves();
+
+        let rx = flip_to_installed("FLIPNOLOG001", &mut registry, &store, &s, None);
+        assert!(rx.is_some(), "clean-exit flip succeeded");
+
+        let entry = registry.find("FLIPNOLOG001").expect("entry present");
+        let code = entry.latest_share_code.as_deref().expect("code");
+        let preview = crate::app::modlist_share::preview_modlist_share_code(code)
+            .expect("regenerated code must decode");
+        assert!(
+            preview.bgee_log_text.contains("comp 0"),
+            "no installed log on disk ⇒ falls back to the rebuilt step3 lines: {}",
+            preview.bgee_log_text
+        );
+
+        if let Some(rx) = rx {
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+        }
         let _ = std::fs::remove_file(&path);
     }
 

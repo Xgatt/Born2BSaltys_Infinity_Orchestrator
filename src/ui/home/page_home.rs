@@ -310,9 +310,11 @@ fn render_share_dialog(orchestrator: &mut OrchestratorApp, ctx: &egui::Context) 
     match outcome {
         ShareOutcome::ExportFile => {
             if let Some(code) = code {
+                let unresolved = share_actions::unresolved_mods_for_code(code);
                 share_actions::export_modlist_file(
                     &entry.name,
                     code,
+                    &unresolved,
                     &mut orchestrator.notification_manager,
                 );
             }
@@ -320,7 +322,8 @@ fn render_share_dialog(orchestrator: &mut OrchestratorApp, ctx: &egui::Context) 
         }
         ShareOutcome::CopyCode => {
             if let Some(code) = code {
-                share_actions::copy_share_code(ctx, &entry.name, code);
+                let unresolved = share_actions::unresolved_mods_for_code(code);
+                share_actions::copy_share_code(ctx, &entry.name, code, &unresolved);
             }
             close_share_dialog(orchestrator);
         }

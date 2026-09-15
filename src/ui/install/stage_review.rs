@@ -244,6 +244,16 @@ pub(crate) fn render_install_settings(
         ui.add_space(16.0);
     }
 
+    if let Some(notice) = state.unresolved_sources_issue.clone() {
+        render_source_notice(
+            ui,
+            palette,
+            &notice,
+            source_warning_action(locked, state.review.modify),
+        );
+        ui.add_space(16.0);
+    }
+
     if locked {
         fact_row(ui, palette, "install mode", REINSTALL_MODE_FACT);
         return;
@@ -332,6 +342,7 @@ pub(crate) const fn source_warning_title(remedy: SourceRemedy) -> &'static str {
         SourceRemedy::OrderMerger => SOURCE_WARNING_TITLE_ORDER_MERGER,
         SourceRemedy::ChangeSource => SOURCE_WARNING_TITLE_CHANGE_SOURCE,
         SourceRemedy::CleanSource => SOURCE_WARNING_TITLE_CLEAN_SOURCE,
+        SourceRemedy::None => "",
     }
 }
 
@@ -360,6 +371,7 @@ pub(crate) const fn source_warning_action_text(
             SOURCE_WARNING_ACTION_MODIFY_ON_CHANGE_SOURCE
         }
         (SourceRemedy::CleanSource, _) => SOURCE_WARNING_ACTION_CLEAN_SOURCE,
+        (SourceRemedy::None, _) => "",
     }
 }
 
@@ -370,6 +382,8 @@ pub(crate) fn render_source_warning(
     remedy: SourceRemedy,
 ) {
     let body_color = egui::Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0xCC);
+    let title = source_warning_title(remedy);
+    let action_text = source_warning_action_text(action, remedy);
     egui::Frame::default()
         .fill(destination_not_empty::warn_fill())
         .stroke(egui::Stroke::new(
@@ -386,24 +400,25 @@ pub(crate) fn render_source_warning(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                let (icon_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::hover());
-                destination_not_empty::paint_warning_triangle(
-                    ui.painter(),
-                    icon_rect.center(),
-                    destination_not_empty::WARN_INK,
-                );
-                ui.label(
-                    egui::RichText::new(source_warning_title(remedy))
-                        .size(13.0)
-                        .family(egui::FontFamily::Name("poppins_medium".into()))
-                        .color(destination_not_empty::WARN_INK),
-                );
-            });
-
-            ui.add_space(4.0);
+            if !title.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let (icon_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(15.0, 15.0), egui::Sense::hover());
+                    destination_not_empty::paint_warning_triangle(
+                        ui.painter(),
+                        icon_rect.center(),
+                        destination_not_empty::WARN_INK,
+                    );
+                    ui.label(
+                        egui::RichText::new(title)
+                            .size(13.0)
+                            .family(egui::FontFamily::Name("poppins_medium".into()))
+                            .color(destination_not_empty::WARN_INK),
+                    );
+                });
+                ui.add_space(4.0);
+            }
 
             ui.add(
                 egui::Label::new(
@@ -415,17 +430,19 @@ pub(crate) fn render_source_warning(
                 .wrap(),
             );
 
-            ui.add_space(6.0);
+            if !action_text.is_empty() {
+                ui.add_space(6.0);
 
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(source_warning_action_text(action, remedy))
-                        .size(14.0)
-                        .family(egui::FontFamily::Name("poppins_light".into()))
-                        .color(body_color),
-                )
-                .wrap(),
-            );
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(action_text)
+                            .size(14.0)
+                            .family(egui::FontFamily::Name("poppins_light".into()))
+                            .color(body_color),
+                    )
+                    .wrap(),
+                );
+            }
         });
 }
 
@@ -683,6 +700,32 @@ mod tests {
         assert!(!begin_disabled_for(&state, &checks));
     }
 
+    #[test]
+    fn unresolved_sources_notice_never_blocks_begin() {
+        let checks = DestinationChecks {
+            ownership: DestinationOwnership::Free,
+            ownership_blocks: false,
+            dest_valid: true,
+            dest_non_empty: false,
+        };
+        let state = InstallScreenState {
+            review: crate::ui::install::state_install::ReviewState {
+                name: "Tactical EET".to_string(),
+                ..Default::default()
+            },
+            import_code: "BIO-MODLIST-V1:CODE".to_string(),
+            unresolved_sources_issue: Some(SourceNotice {
+                severity: SourceNoticeSeverity::Warning,
+                text:
+                    "2 mods have no download source: X, Y. BIO will not be able to download them."
+                        .to_string(),
+                remedy: SourceRemedy::None,
+            }),
+            ..Default::default()
+        };
+        assert!(!begin_disabled_for(&state, &checks));
+    }
+
     fn all_good<'a>() -> BeginGuards<'a> {
         BeginGuards {
             name: "Tactical EET",
@@ -801,6 +844,7 @@ mod tests {
             author: None,
             description: None,
             forked_from: Vec::new(),
+            unresolved_mods: Vec::new(),
         };
         assert_eq!(display_name("  Typed  ", &preview), "Typed");
         assert_eq!(display_name("   ", &preview), "From the code");
@@ -943,6 +987,7 @@ mod tests {
                 source_warning_action_text(action, SourceRemedy::CleanSource),
                 "Mods already in the source can conflict with this list. Point Settings at a clean install, or proceed anyway."
             );
+            assert_eq!(source_warning_action_text(action, SourceRemedy::None), "");
         }
     }
 
@@ -960,6 +1005,7 @@ mod tests {
             source_warning_title(SourceRemedy::CleanSource),
             "Modded game source"
         );
+        assert_eq!(source_warning_title(SourceRemedy::None), "");
     }
 
     #[test]

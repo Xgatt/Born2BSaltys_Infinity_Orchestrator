@@ -327,6 +327,7 @@ mod tests {
             author: author.map(str::to_string),
             description: description.map(str::to_string),
             forked_from,
+            unresolved_mods: Vec::new(),
         }
     }
 
