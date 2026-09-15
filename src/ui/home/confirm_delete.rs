@@ -12,7 +12,6 @@ pub fn delete_dialog_text(entry: &ModlistEntry) -> (String, String) {
         "This will permanently remove:\n\
          \u{2022} the modlist's registry entry (it disappears from Home)\n\
          \u{2022} the install folder on disk: {dest}\n\
-         \u{2022} its saved workspace in BIO's data folder (order, selection, settings)\n\
          \nThis action cannot be undone."
     );
     (title, body)
@@ -99,9 +98,7 @@ mod tests {
         assert!(b.starts_with("This will permanently remove:"));
         assert!(b.contains("\u{2022} the modlist's registry entry (it disappears from Home)"));
         assert!(b.contains("\u{2022} the install folder on disk: C:\\BIO\\modlists\\x"));
-        assert!(b.contains(
-            "\u{2022} its saved workspace in BIO's data folder (order, selection, settings)"
-        ));
+        assert!(!b.contains("saved workspace"));
         assert!(b.trim_end().ends_with("This action cannot be undone."));
     }
 
