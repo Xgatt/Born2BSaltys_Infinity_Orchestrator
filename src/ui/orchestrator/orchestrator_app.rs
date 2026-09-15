@@ -271,6 +271,9 @@ pub struct OrchestratorApp {
 
     pub(crate) pending_reinstall_id: Option<String>,
 
+    pub(crate) pending_replaced_entry:
+        Option<crate::install_runtime::install_modlist_registration::ReplacedEntry>,
+
     pub(crate) active_install_modlist_id: Option<String>,
 
     pub post_install_reset_gate: PostInstallResetGate,
@@ -314,6 +317,9 @@ pub struct OrchestratorApp {
     pub(crate) hash_progress: Arc<std::sync::Mutex<Option<(usize, usize)>>>,
 
     pub(crate) pending_folder_deletes: Vec<PendingFolderDelete>,
+
+    #[cfg(test)]
+    pub(crate) isolated_test_workspace_root: Option<std::path::PathBuf>,
 }
 
 fn load_registry(registry_store: &RegistryStore) -> RegistryLoad {
@@ -447,6 +453,7 @@ impl OrchestratorApp {
 
             workspace_step5: WorkspaceStep5State::default(),
             pending_reinstall_id: None,
+            pending_replaced_entry: None,
             active_install_modlist_id: None,
             post_install_reset_gate: PostInstallResetGate::Idle,
             install_running_since: None,
@@ -474,6 +481,8 @@ impl OrchestratorApp {
             destination_prep_generation: 0,
             hash_progress: Arc::new(std::sync::Mutex::new(None)),
             pending_folder_deletes: Vec::new(),
+            #[cfg(test)]
+            isolated_test_workspace_root: None,
         };
 
         if app.redesign_settings.validate_paths_on_startup {
@@ -598,14 +607,11 @@ impl OrchestratorApp {
             return;
         };
 
-        let share_code_override: Option<String> = if from_workspace {
-            None
-        } else {
-            self.registry
-                .find(&id)
-                .and_then(|e| e.latest_share_code.clone())
-                .filter(|c| !c.trim().is_empty())
-        };
+        let held_code: Option<String> = self
+            .registry
+            .find(&id)
+            .and_then(|e| e.latest_share_code.clone())
+            .filter(|c| !c.trim().is_empty());
 
         if !from_workspace {
             crate::app::app_step2_log::apply_saved_weidu_log_selection(&mut self.wizard_state);
@@ -624,7 +630,7 @@ impl OrchestratorApp {
             registry,
             registry_store,
             wizard_state,
-            share_code_override.as_deref(),
+            held_code.as_deref(),
         );
         if rx.is_some() {
             self.install_size_worker_rx = rx;
@@ -1619,7 +1625,16 @@ impl OrchestratorApp {
             exe_fingerprint: app.exe_fingerprint.clone(),
             step1: app.wizard_state.step1.clone().into(),
         };
+        let workspace_root = dir.join(format!("{stem}_ws"));
+        crate::registry::store_workspace::set_modlist_data_root(Some(workspace_root.clone()));
+        app.isolated_test_workspace_root = Some(workspace_root);
         app
+    }
+
+    fn cleanup_isolated_test_workspace_root(&mut self) {
+        if let Some(root) = self.isolated_test_workspace_root.take() {
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 }
 
@@ -1627,6 +1642,8 @@ impl Drop for OrchestratorApp {
     fn drop(&mut self) {
         self.join_all_destination_prep_workers();
         self.flush_all_now();
+        #[cfg(test)]
+        self.cleanup_isolated_test_workspace_root();
     }
 }
 

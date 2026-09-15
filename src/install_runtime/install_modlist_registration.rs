@@ -11,11 +11,18 @@ use crate::install_runtime::start_hooks::{self, InstallButtonVariant};
 use crate::registry::errors::RegistryError;
 use crate::registry::ids::new_modlist_id;
 use crate::registry::model::{Game, ModlistEntry, ModlistRegistry, ModlistState};
-use crate::registry::store_workspace::WorkspaceStore;
+use crate::registry::operations;
+use crate::registry::store_workspace::{self, WorkspaceStore};
 use crate::registry::workspace_model::ModlistWorkspaceState;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 
 const FALLBACK_NAME: &str = "Shared modlist";
+
+pub(crate) struct ReplacedEntry {
+    pub(crate) entry: ModlistEntry,
+    pub(crate) index: usize,
+    pub(crate) data_dir: PathBuf,
+}
 
 pub(crate) fn register_install_modlist_paste(
     preview: &ModlistSharePreview,
@@ -89,6 +96,82 @@ fn existing_entry_id_for_destination(
         .map(|e| e.id.clone())
 }
 
+fn replace_existing_destination_entry(
+    orchestrator: &mut OrchestratorApp,
+    old_id: &str,
+    destination: &str,
+) -> Option<(String, bool)> {
+    let Some(preview) = orchestrator.install_screen_state.parsed_preview.clone() else {
+        warn!(
+            target = "orchestrator",
+            "early_mint_modlist_id: destination is owned by {old_id} but there is no \
+             parsed preview — cannot replace it"
+        );
+        return None;
+    };
+
+    let Some((old_index, old_entry)) = orchestrator
+        .registry
+        .entries
+        .iter()
+        .position(|e| e.id == old_id)
+        .map(|index| (index, orchestrator.registry.entries[index].clone()))
+    else {
+        warn!(
+            target = "orchestrator",
+            "early_mint_modlist_id: replaced entry {old_id} vanished from the registry"
+        );
+        return None;
+    };
+    let old_name = old_entry.name.clone();
+
+    {
+        let store = &orchestrator.registry_store;
+        let registry = &mut orchestrator.registry;
+        if let Err(err) = operations::remove_entry_keep_folder(old_id, store, registry) {
+            if !registry.entries.iter().any(|e| e.id == old_id) {
+                registry
+                    .entries
+                    .insert(old_index.min(registry.entries.len()), old_entry);
+            }
+            warn!(
+                target = "orchestrator",
+                "early_mint_modlist_id: removing the replaced entry {old_id} failed: {err}"
+            );
+            return None;
+        }
+    }
+    orchestrator.workspace_state.remove(old_id);
+    orchestrator.workspace_stores.remove(old_id);
+    orchestrator.pending_replaced_entry = Some(ReplacedEntry {
+        entry: old_entry,
+        index: old_index,
+        data_dir: store_workspace::modlist_data_dir(old_id),
+    });
+
+    let entry =
+        match register_install_modlist_paste(&preview, destination, &mut orchestrator.registry) {
+            Ok(e) => e,
+            Err(err) => {
+                restore_pending_replaced_entry(orchestrator);
+                warn!(
+                    target = "orchestrator",
+                    "early_mint_modlist_id: register_install_modlist_paste failed while \
+                     replacing {old_id}: {err}"
+                );
+                return None;
+            }
+        };
+    persist_new_install_workspace(orchestrator, &entry);
+    info!(
+        target = "orchestrator",
+        "early_mint_modlist_id: entry {old_id} \"{old_name}\" was replaced by {} \"{}\" at {destination}",
+        entry.id,
+        entry.name
+    );
+    Some((entry.id, true))
+}
+
 pub fn early_mint_modlist_id(
     orchestrator: &mut OrchestratorApp,
     destination: &str,
@@ -101,8 +184,8 @@ pub fn early_mint_modlist_id(
     {
         return Some((id, false));
     }
-    if let Some(id) = existing_entry_id_for_destination(&orchestrator.registry, destination) {
-        return Some((id, false));
+    if let Some(old_id) = existing_entry_id_for_destination(&orchestrator.registry, destination) {
+        return replace_existing_destination_entry(orchestrator, &old_id, destination);
     }
 
     let Some(preview) = orchestrator.install_screen_state.parsed_preview.clone() else {
@@ -131,6 +214,28 @@ pub fn early_mint_modlist_id(
     Some((entry.id, true))
 }
 
+fn restore_pending_replaced_entry(orchestrator: &mut OrchestratorApp) {
+    let Some(replaced) = orchestrator.pending_replaced_entry.take() else {
+        return;
+    };
+    let restored_id = replaced.entry.id.clone();
+    let index = replaced.index.min(orchestrator.registry.entries.len());
+    orchestrator.registry.entries.insert(index, replaced.entry);
+    if let Err(err) = orchestrator.registry_store.save(&orchestrator.registry) {
+        warn!(
+            target = "orchestrator",
+            "restore_pending_replaced_entry: registry persist failed: {err}"
+        );
+    }
+    orchestrator
+        .persistence_cycle
+        .mark_registry_dirty(std::time::Instant::now());
+    info!(
+        target = "orchestrator",
+        "restore_pending_replaced_entry: restored {restored_id} after a failed replace"
+    );
+}
+
 pub fn rollback_early_minted_entry(orchestrator: &mut OrchestratorApp, id: &str) {
     let before = orchestrator.registry.entries.len();
     orchestrator.registry.entries.retain(|e| e.id != id);
@@ -149,6 +254,7 @@ pub fn rollback_early_minted_entry(orchestrator: &mut OrchestratorApp, id: &str)
             .persistence_cycle
             .mark_registry_dirty(std::time::Instant::now());
     }
+    restore_pending_replaced_entry(orchestrator);
 }
 
 pub fn register_and_write_install_start_artifacts(orchestrator: &mut OrchestratorApp) -> bool {
@@ -167,12 +273,16 @@ pub fn register_and_write_install_start_artifacts(orchestrator: &mut Orchestrato
         &modlist_id,
         orchestrator.pending_reinstall_id.as_deref(),
     );
-    let code_source = orchestrator
-        .registry
-        .find(&modlist_id)
-        .and_then(|e| e.latest_share_code.clone())
-        .filter(|c| !c.trim().is_empty())
-        .unwrap_or_else(|| orchestrator.install_screen_state.import_code.clone());
+    let chosen_code = orchestrator.install_screen_state.import_code.trim();
+    let code_source = if chosen_code.is_empty() {
+        orchestrator
+            .registry
+            .find(&modlist_id)
+            .and_then(|e| e.latest_share_code.clone())
+            .unwrap_or_default()
+    } else {
+        chosen_code.to_string()
+    };
     {
         let OrchestratorApp {
             registry,
@@ -202,7 +312,35 @@ pub fn register_and_write_install_start_artifacts(orchestrator: &mut Orchestrato
          clean-exit flip will move it InProgress → Installed; it shows on \
          Home In-progress until then)"
     );
+    finalize_pending_replaced_entry(orchestrator, &modlist_id);
     true
+}
+
+fn finalize_pending_replaced_entry(orchestrator: &mut OrchestratorApp, started_id: &str) {
+    let Some(replaced) = &orchestrator.pending_replaced_entry else {
+        return;
+    };
+    if replaced.entry.id == started_id {
+        return;
+    }
+    let data_dir = replaced.data_dir.clone();
+    let replaced_id = replaced.entry.id.clone();
+    orchestrator.pending_replaced_entry = None;
+    if let Err(err) = std::fs::remove_dir_all(&data_dir)
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        warn!(
+            target = "orchestrator",
+            "finalize_pending_replaced_entry: removing {} for the replaced entry \
+             {replaced_id} failed: {err}",
+            data_dir.display()
+        );
+    }
+    info!(
+        target = "orchestrator",
+        "finalize_pending_replaced_entry: the replaced entry {replaced_id}'s data dir was \
+         removed after the new install started successfully"
+    );
 }
 
 fn install_start_modlist_id(
@@ -291,6 +429,26 @@ mod tests {
 
     use super::*;
     use crate::app::modlist_share::ForkAncestor;
+
+    struct TempDestGuard(PathBuf);
+
+    impl TempDestGuard {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("bio_install_reg_test_{tag}_{}", std::process::id()));
+            Self(path)
+        }
+
+        fn as_string(&self) -> String {
+            self.0.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for TempDestGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn preview(
         name: Option<&str>,
@@ -456,6 +614,255 @@ mod tests {
         let blank = preview_with_description(Some("X"), "EET", None, Some("   "), vec![]);
         let e2 = register_install_modlist_paste(&blank, "/y", &mut reg).expect("register ok");
         assert_eq!(e2.description, None, "blank description ⇒ None");
+    }
+
+    fn minimal_share_payload(name: &str) -> String {
+        format!(
+            r#"{{
+                "format_version": 1,
+                "game_install": "BGEE",
+                "install_mode": "start_from_scratch",
+                "weidu_logs": {{ "bgee": "~MOD/MOD.TP2~ #0 #0 // A component" }},
+                "name": "{name}"
+            }}"#
+        )
+    }
+
+    fn minimal_share_code(name: &str) -> String {
+        crate::app::modlist_share::encode_share_payload_text(&minimal_share_payload(name))
+            .expect("mint code")
+    }
+
+    fn app_with_dest_entry(tag: &str, dest: &str, entry_name: &str) -> OrchestratorApp {
+        let mut app = OrchestratorApp::new_isolated_for_test(tag);
+        app.registry.entries.push(ModlistEntry {
+            id: "EXISTING00001".to_string(),
+            name: entry_name.to_string(),
+            game: Game::EET,
+            destination_folder: dest.to_string(),
+            state: ModlistState::InProgress,
+            ..Default::default()
+        });
+        app
+    }
+
+    #[test]
+    fn installing_into_an_owned_destination_replaces_the_old_entry() {
+        let mut app = app_with_dest_entry("replace-dest", "D:\\dest", "EET Essentials");
+        {
+            let old = app.registry.find_mut("EXISTING00001").unwrap();
+            old.description = Some("Old description".to_string());
+            old.latest_share_code = Some(minimal_share_code("EET Essentials"));
+        }
+        app.install_screen_state.parsed_preview = Some(preview_with_description(
+            Some("EET Essentials 2"),
+            "EET",
+            None,
+            Some("Catalog description"),
+            vec![],
+        ));
+        app.install_screen_state.destination = "D:\\dest".to_string();
+
+        let (id, minted) = early_mint_modlist_id(&mut app, "D:\\dest").expect("replaced");
+
+        assert!(minted, "a replace mints a genuinely fresh entry");
+        assert_ne!(id, "EXISTING00001", "the old id is retired, not reused");
+        assert!(
+            app.registry.find("EXISTING00001").is_none(),
+            "the old entry is gone from the registry"
+        );
+        let at_dest: Vec<_> = app
+            .registry
+            .entries
+            .iter()
+            .filter(|e| e.destination_folder.trim() == "D:\\dest")
+            .collect();
+        assert_eq!(
+            at_dest.len(),
+            1,
+            "exactly one entry now owns the destination"
+        );
+        let replaced = at_dest[0];
+        assert_eq!(replaced.id, id);
+        assert_eq!(replaced.name, "EET Essentials 2");
+        assert_eq!(
+            replaced.latest_share_code, None,
+            "a freshly minted entry carries no stale stored code"
+        );
+        assert_eq!(replaced.description.as_deref(), Some("Catalog description"));
+
+        let pending = app
+            .pending_replaced_entry
+            .as_ref()
+            .expect("the replaced entry survives, pending finalization");
+        assert_eq!(pending.entry.id, "EXISTING00001");
+        assert_eq!(pending.entry.name, "EET Essentials");
+    }
+
+    #[test]
+    fn rolling_back_a_replace_restores_the_old_entry() {
+        let mut app = app_with_dest_entry("replace-rollback", "D:\\dest", "EET Essentials");
+        {
+            let old = app.registry.find_mut("EXISTING00001").unwrap();
+            old.description = Some("Old description".to_string());
+            old.latest_share_code = Some(minimal_share_code("EET Essentials"));
+        }
+        app.install_screen_state.parsed_preview = Some(preview_with_description(
+            Some("EET Essentials 2"),
+            "EET",
+            None,
+            Some("Catalog description"),
+            vec![],
+        ));
+        app.install_screen_state.destination = "D:\\dest".to_string();
+
+        let (new_id, minted) = early_mint_modlist_id(&mut app, "D:\\dest").expect("replaced");
+        assert!(minted);
+
+        rollback_early_minted_entry(&mut app, &new_id);
+
+        assert!(
+            app.registry.find(&new_id).is_none(),
+            "the freshly minted entry is gone after rollback"
+        );
+        let restored = app
+            .registry
+            .find("EXISTING00001")
+            .expect("the replaced entry is restored");
+        assert_eq!(restored.name, "EET Essentials");
+        assert_eq!(restored.description.as_deref(), Some("Old description"));
+        assert_eq!(
+            app.registry
+                .entries
+                .iter()
+                .position(|e| e.id == "EXISTING00001"),
+            Some(0),
+            "restored at its original index"
+        );
+        assert!(
+            app.pending_replaced_entry.is_none(),
+            "the pending replace is cleared after rollback"
+        );
+    }
+
+    #[test]
+    fn install_start_finalizes_the_replace() {
+        let dest = TempDestGuard::new("replace-finalize");
+        let mut app = app_with_dest_entry("replace-finalize", &dest.as_string(), "EET Essentials");
+        {
+            let old = app.registry.find_mut("EXISTING00001").unwrap();
+            old.description = Some("Old description".to_string());
+            old.latest_share_code = Some(minimal_share_code("EET Essentials"));
+        }
+        app.install_screen_state.parsed_preview = Some(preview_with_description(
+            Some("EET Essentials 2"),
+            "EET",
+            None,
+            Some("Catalog description"),
+            vec![],
+        ));
+        app.install_screen_state.destination = dest.as_string();
+
+        let (new_id, minted) =
+            early_mint_modlist_id(&mut app, &dest.as_string()).expect("replaced");
+        assert!(minted);
+        let old_data_dir = app
+            .pending_replaced_entry
+            .as_ref()
+            .expect("a replace leaves a pending replaced entry")
+            .data_dir
+            .clone();
+        std::fs::create_dir_all(&old_data_dir).expect("seed the old data dir");
+        assert!(old_data_dir.is_dir());
+
+        app.pending_reinstall_id = Some(new_id);
+        let ok = register_and_write_install_start_artifacts(&mut app);
+
+        assert!(ok, "install-start artifacts registered");
+        assert!(
+            app.pending_replaced_entry.is_none(),
+            "the pending replace is cleared once the new install starts"
+        );
+        assert!(
+            !old_data_dir.exists(),
+            "the replaced entry's data dir is gone once the new install starts"
+        );
+    }
+
+    #[test]
+    fn install_start_holds_the_chosen_code_over_the_stored_one() {
+        let dest = TempDestGuard::new("held");
+        let mut app = OrchestratorApp::new_isolated_for_test("held-code");
+        let stored_code = minimal_share_code("Stored Name");
+        let chosen_code = minimal_share_code("Chosen Name");
+        app.registry.entries.push(ModlistEntry {
+            id: "HELDCODE0001".to_string(),
+            name: "Stored Name".to_string(),
+            game: Game::BGEE,
+            destination_folder: dest.as_string(),
+            state: ModlistState::InProgress,
+            latest_share_code: Some(stored_code),
+            ..Default::default()
+        });
+        app.install_screen_state.import_code = chosen_code;
+        app.install_screen_state.destination = dest.as_string();
+        app.pending_reinstall_id = Some("HELDCODE0001".to_string());
+
+        let ok = register_and_write_install_start_artifacts(&mut app);
+
+        assert!(ok, "install-start artifacts registered");
+        let held = app
+            .registry
+            .find("HELDCODE0001")
+            .unwrap()
+            .latest_share_code
+            .clone()
+            .expect("held code present");
+        let preview = crate::app::modlist_share::preview_modlist_share_code(&held)
+            .expect("held code decodes");
+        assert_eq!(
+            preview.name.as_deref(),
+            Some("Chosen Name"),
+            "the user-chosen code wins over the entry's previously stored one"
+        );
+        assert!(
+            !preview.allow_auto_install,
+            "install-start always flips allow_auto_install off"
+        );
+    }
+
+    #[test]
+    fn reinstall_equivalence_holds_the_stored_code_when_import_code_mirrors_it() {
+        let dest = TempDestGuard::new("held2");
+        let mut app = OrchestratorApp::new_isolated_for_test("held-code-reinstall");
+        let stored_code = minimal_share_code("Stored Name");
+        app.registry.entries.push(ModlistEntry {
+            id: "HELDCODE0002".to_string(),
+            name: "Stored Name".to_string(),
+            game: Game::BGEE,
+            destination_folder: dest.as_string(),
+            state: ModlistState::Installed,
+            latest_share_code: Some(stored_code.clone()),
+            ..Default::default()
+        });
+        app.install_screen_state.import_code = stored_code;
+        app.install_screen_state.destination = dest.as_string();
+        app.pending_reinstall_id = Some("HELDCODE0002".to_string());
+
+        let ok = register_and_write_install_start_artifacts(&mut app);
+
+        assert!(ok, "install-start artifacts registered");
+        let held = app
+            .registry
+            .find("HELDCODE0002")
+            .unwrap()
+            .latest_share_code
+            .clone()
+            .expect("held code present");
+        let preview = crate::app::modlist_share::preview_modlist_share_code(&held)
+            .expect("held code decodes");
+        assert_eq!(preview.name.as_deref(), Some("Stored Name"));
+        assert!(!preview.allow_auto_install);
     }
 
     #[test]
