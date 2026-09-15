@@ -7,10 +7,11 @@ use tracing::warn;
 use crate::app::compat_dlc_source::SourceNotice;
 use crate::app::controller::util::open_in_shell;
 use crate::app::modlist_share::{ForkAncestor, ModlistSharePreview};
+use crate::gallery_feed::index::FeedEntry;
 use crate::registry::model::Game;
 use crate::ui::install::fork_info_button;
 use crate::ui::install::gallery::card_art;
-use crate::ui::install::gallery::catalog::{GalleryEntry, requirements_for};
+use crate::ui::install::gallery::catalog::requirements_for;
 use crate::ui::install::stage_review::{self, ModifyAvailability};
 use crate::ui::install::state_install::{DrawerKind, ReviewOrigin};
 use crate::ui::install::sub_flow_footer::{self, FooterClick, LeftActionBtn, PrimaryBtn};
@@ -62,7 +63,6 @@ pub(crate) struct DetailsHeader {
     pub(crate) description: Option<String>,
     pub(crate) fork_note: Option<String>,
     pub(crate) tags: Vec<String>,
-    pub(crate) sample: bool,
     pub(crate) requirements: String,
     pub(crate) built_with: Option<String>,
     pub(crate) lineage: Vec<ForkAncestor>,
@@ -71,17 +71,16 @@ pub(crate) struct DetailsHeader {
 
 impl DetailsHeader {
     #[must_use]
-    pub(crate) fn from_gallery_entry(entry: &GalleryEntry, preview: &ModlistSharePreview) -> Self {
+    pub(crate) fn from_gallery_entry(entry: &FeedEntry, preview: &ModlistSharePreview) -> Self {
         Self {
-            name: entry.name.to_string(),
-            author: Some(entry.author.to_string()),
-            version: Some(entry.version.to_string()),
+            name: entry.name.clone(),
+            author: Some(entry.author.clone()),
+            version: Some(entry.version.clone()),
             game: entry.game,
-            description: Some(entry.description.to_string()),
+            description: Some(entry.description.clone()),
             fork_note: None,
-            tags: entry.tags.iter().map(|tag| (*tag).to_string()).collect(),
-            sample: entry.sample,
-            requirements: entry.requirements.to_string(),
+            tags: entry.tags.clone(),
+            requirements: entry.requirements.clone(),
             built_with: non_empty(&preview.bio_version),
             lineage: preview.forked_from.clone(),
             back_label: "All modlists",
@@ -133,7 +132,6 @@ impl DetailsHeader {
             } else {
                 Vec::new()
             },
-            sample: false,
             requirements: requirements_for(game).to_string(),
             built_with: non_empty(&preview.bio_version),
             source_compat_issue: None,
@@ -347,9 +345,6 @@ fn header_row(
                     render_pill(ui, palette, header.game.to_legacy_string(), PillTone::Info);
                     for tag in &header.tags {
                         render_pill(ui, palette, tag, PillTone::Neutral);
-                    }
-                    if header.sample {
-                        render_pill(ui, palette, "Sample", PillTone::Warn);
                     }
                 });
             },
@@ -586,18 +581,14 @@ mod tests {
         let preview = eet_preview("0.1.0-test");
         let header = DetailsHeader::from_gallery_entry(entry, &preview);
 
-        assert_eq!(header.name, "EET + Fixes");
-        assert_eq!(header.author.as_deref(), Some("BIO Team"));
-        assert_eq!(header.version.as_deref(), Some("1.0.0"));
-        assert_eq!(header.description.as_deref(), Some(entry.description));
+        assert_eq!(header.name, entry.name);
+        assert_eq!(header.author.as_deref(), Some(entry.author.as_str()));
+        assert_eq!(header.version.as_deref(), Some(entry.version.as_str()));
         assert_eq!(
-            header.tags,
-            entry
-                .tags
-                .iter()
-                .map(|tag| (*tag).to_string())
-                .collect::<Vec<_>>()
+            header.description.as_deref(),
+            Some(entry.description.as_str())
         );
+        assert_eq!(header.tags, entry.tags);
         assert_eq!(header.built_with.as_deref(), Some("0.1.0-test"));
         assert_eq!(header.back_label, "All modlists");
     }
