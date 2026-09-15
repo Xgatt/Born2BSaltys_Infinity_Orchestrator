@@ -210,7 +210,10 @@ fn drawer_request(
         palette,
         &mut orchestrator.install_screen_state,
         &orchestrator.registry,
-        orchestrator.pending_reinstall_id.as_deref(),
+        drawers::install_drawer::DrawerIds {
+            pending_reinstall_id: orchestrator.pending_reinstall_id.as_deref(),
+            installing_id: orchestrator.active_install_modlist_id.as_deref(),
+        },
     ) {
         drawers::DrawerOutcome::BeginInstall => {
             Some(InstallRequest::Stage(begin_install(orchestrator)))

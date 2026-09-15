@@ -695,9 +695,17 @@ fn finish_pipeline_arm_after_destination_prep(
         .pipeline_flags
         .set_armed(true);
 
+    let held_id = match orchestrator.install_screen_state.pipeline_kind {
+        PipelineKind::Fork => orchestrator.active_install_modlist_id.clone(),
+        PipelineKind::Install => orchestrator.pending_reinstall_id.clone(),
+    };
+
     let early_mint_result = if auto_build_driver::is_share_code_consuming(inputs.workflow) {
-        match install_modlist_registration::early_mint_modlist_id(orchestrator, &inputs.destination)
-        {
+        match install_modlist_registration::early_mint_modlist_id(
+            orchestrator,
+            &inputs.destination,
+            held_id.as_deref(),
+        ) {
             Ok(result) => result,
             Err(err) => {
                 set_pipeline_arm_error(orchestrator, &err);
@@ -739,7 +747,10 @@ fn finish_pipeline_arm_after_destination_prep(
                 &mut orchestrator.wizard_state,
                 &mods_archive_folder,
             );
-            install_modlist_registration::register_and_write_install_start_artifacts(orchestrator);
+            install_modlist_registration::register_and_write_install_start_artifacts(
+                orchestrator,
+                early_mint_result.as_ref().map(|(id, _)| id.as_str()),
+            );
         }
         Err(err) => {
             if let Some((ref id, true)) = early_mint_result {
@@ -2661,5 +2672,279 @@ mod tests {
             msg,
             "Pinned versions of the following mods not available. Latest will be installed:\n- ISNF (6.5.5 -> 6.5.6)\n- OtherMod (v0.3 -> v1.0)"
         );
+    }
+
+    struct ClaimRouteDestGuard(std::path::PathBuf);
+
+    impl ClaimRouteDestGuard {
+        fn new(tag: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("bio_claim_route_{tag}_{}", std::process::id()));
+            Self(path)
+        }
+
+        fn as_string(&self) -> String {
+            self.0.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for ClaimRouteDestGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn claim_route_share_payload(name: &str) -> String {
+        format!(
+            r#"{{
+                "format_version": 1,
+                "game_install": "BGEE",
+                "install_mode": "start_from_scratch",
+                "weidu_logs": {{ "bgee": "~MOD/MOD.TP2~ #0 #0 // A component" }},
+                "name": "{name}"
+            }}"#
+        )
+    }
+
+    fn claim_route_share_code(name: &str) -> String {
+        crate::app::modlist_share::encode_share_payload_text(&claim_route_share_payload(name))
+            .expect("mint code")
+    }
+
+    fn entry_at(id: &str, name: &str, dest: &str) -> crate::registry::model::ModlistEntry {
+        crate::registry::model::ModlistEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            game: crate::registry::model::Game::EET,
+            destination_folder: dest.to_string(),
+            state: crate::registry::model::ModlistState::Installed,
+            ..Default::default()
+        }
+    }
+
+    fn arm_with_code(
+        app: &mut crate::ui::orchestrator::orchestrator_app::OrchestratorApp,
+        dest: &str,
+        name: &str,
+        workflow: crate::install_runtime::flag_policies::InstallWorkflow,
+    ) {
+        let code = claim_route_share_code(name);
+        let preview = crate::app::modlist_share::preview_modlist_share_code(&code)
+            .expect("share code decodes");
+        app.install_screen_state.destination = dest.to_string();
+        app.install_screen_state.import_code = code;
+        app.install_screen_state.parsed_preview = Some(preview);
+        app.install_screen_state.preview_cached = true;
+        app.install_screen_state.destination_choice =
+            Some(crate::ui::install::state_install::DestChoice::Clear);
+        let inputs = LivePipelineInputs::from_workflow(app, workflow);
+        finish_pipeline_arm_after_destination_prep(app, &inputs);
+    }
+
+    #[test]
+    fn gallery_install_into_an_owned_folder_replaces_that_list() {
+        let dest = ClaimRouteDestGuard::new("gallery-replace");
+        let dest_s = dest.as_string();
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "claim-gallery-replace",
+            );
+        assert!(app.wizard_state.step1.bgee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.bg2ee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.eet_pre_dir.is_empty());
+        assert!(app.wizard_state.step1.eet_new_dir.is_empty());
+        assert!(app.wizard_state.step1.mods_folder.is_empty());
+
+        app.registry
+            .entries
+            .push(entry_at("OLD", "OLD name", &dest_s));
+        app.install_screen_state.pipeline_kind = PipelineKind::Install;
+
+        let old_data_dir = crate::registry::store_workspace::modlist_data_dir("OLD");
+        std::fs::create_dir_all(&old_data_dir).expect("seed OLD data dir");
+        assert!(old_data_dir.is_dir());
+
+        arm_with_code(
+            &mut app,
+            &dest_s,
+            "New name",
+            crate::install_runtime::flag_policies::InstallWorkflow::PasteAndInstall,
+        );
+
+        assert_eq!(app.install_screen_state.pipeline_arm_error, None);
+        let at_dest: Vec<_> = app
+            .registry
+            .entries
+            .iter()
+            .filter(|e| e.destination_folder.trim() == dest_s)
+            .collect();
+        assert_eq!(
+            at_dest.len(),
+            1,
+            "exactly one entry now owns the destination"
+        );
+        assert_eq!(at_dest[0].name, "New name");
+        assert_ne!(at_dest[0].id, "OLD");
+        assert!(app.registry.find("OLD").is_none());
+        assert!(app.pending_replaced_entry.is_none());
+        assert_eq!(
+            app.active_install_modlist_id.as_deref(),
+            Some(at_dest[0].id.as_str())
+        );
+        assert!(!old_data_dir.is_dir(), "OLD's data dir is gone");
+    }
+
+    #[test]
+    fn fork_route_adopts_the_fork_it_minted() {
+        let dest = ClaimRouteDestGuard::new("fork-adopt");
+        let dest_s = dest.as_string();
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "claim-fork-adopt",
+            );
+        assert!(app.wizard_state.step1.bgee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.bg2ee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.eet_pre_dir.is_empty());
+        assert!(app.wizard_state.step1.eet_new_dir.is_empty());
+        assert!(app.wizard_state.step1.mods_folder.is_empty());
+
+        app.registry
+            .entries
+            .push(entry_at("FORK", "My fork", &dest_s));
+        app.active_install_modlist_id = Some("FORK".to_string());
+        app.install_screen_state.pipeline_kind = PipelineKind::Fork;
+
+        arm_with_code(
+            &mut app,
+            &dest_s,
+            "Parent",
+            crate::install_runtime::flag_policies::InstallWorkflow::ForkAndModify,
+        );
+
+        assert_eq!(app.install_screen_state.pipeline_arm_error, None);
+        assert_eq!(app.registry.entries.len(), 1);
+        assert_eq!(
+            app.registry.find("FORK").expect("FORK still present").name,
+            "My fork"
+        );
+        assert_eq!(app.active_install_modlist_id.as_deref(), Some("FORK"));
+        assert!(app.pending_replaced_entry.is_none());
+    }
+
+    #[test]
+    fn reinstall_route_adopts_the_reinstalled_list() {
+        let dest = ClaimRouteDestGuard::new("reinstall-adopt");
+        let dest_s = dest.as_string();
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "claim-reinstall-adopt",
+            );
+        assert!(app.wizard_state.step1.bgee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.bg2ee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.eet_pre_dir.is_empty());
+        assert!(app.wizard_state.step1.eet_new_dir.is_empty());
+        assert!(app.wizard_state.step1.mods_folder.is_empty());
+
+        app.registry
+            .entries
+            .push(entry_at("RE", "RE name", &dest_s));
+        app.pending_reinstall_id = Some("RE".to_string());
+        app.install_screen_state.pipeline_kind = PipelineKind::Install;
+
+        arm_with_code(
+            &mut app,
+            &dest_s,
+            "Ignored",
+            crate::install_runtime::flag_policies::InstallWorkflow::Reinstall,
+        );
+
+        assert_eq!(app.install_screen_state.pipeline_arm_error, None);
+        assert_eq!(app.registry.entries.len(), 1);
+        assert_eq!(
+            app.registry.find("RE").expect("RE still present").name,
+            "RE name"
+        );
+        assert_eq!(app.active_install_modlist_id.as_deref(), Some("RE"));
+    }
+
+    #[test]
+    fn arming_into_a_folder_another_install_is_using_is_refused() {
+        let dest = ClaimRouteDestGuard::new("busy-refused");
+        let dest_s = dest.as_string();
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "claim-busy-refused",
+            );
+        assert!(app.wizard_state.step1.bgee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.bg2ee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.eet_pre_dir.is_empty());
+        assert!(app.wizard_state.step1.eet_new_dir.is_empty());
+        assert!(app.wizard_state.step1.mods_folder.is_empty());
+
+        app.registry
+            .entries
+            .push(entry_at("BUSY", "Busy List", &dest_s));
+        app.active_install_modlist_id = Some("BUSY".to_string());
+        app.install_screen_state.pipeline_kind = PipelineKind::Install;
+        app.pending_reinstall_id = None;
+
+        arm_with_code(
+            &mut app,
+            &dest_s,
+            "New name",
+            crate::install_runtime::flag_policies::InstallWorkflow::PasteAndInstall,
+        );
+
+        let err = app
+            .install_screen_state
+            .pipeline_arm_error
+            .as_deref()
+            .expect("arm error");
+        assert!(
+            err.contains("is installing into this folder right now"),
+            "got {err:?}"
+        );
+        assert_eq!(app.registry.entries.len(), 1);
+        assert!(app.registry.find("BUSY").is_some());
+        assert!(app.pending_replaced_entry.is_none());
+    }
+
+    #[test]
+    fn arming_with_no_preview_on_an_owned_folder_is_refused_and_both_lists_survive() {
+        let dest = ClaimRouteDestGuard::new("noprev-refused");
+        let dest_s = dest.as_string();
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "claim-noprev-refused",
+            );
+        assert!(app.wizard_state.step1.bgee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.bg2ee_game_folder.is_empty());
+        assert!(app.wizard_state.step1.eet_pre_dir.is_empty());
+        assert!(app.wizard_state.step1.eet_new_dir.is_empty());
+        assert!(app.wizard_state.step1.mods_folder.is_empty());
+
+        app.registry
+            .entries
+            .push(entry_at("OLD", "OLD name", &dest_s));
+        app.install_screen_state.destination = dest_s.clone();
+        app.install_screen_state.parsed_preview = None;
+        app.install_screen_state.destination_choice =
+            Some(crate::ui::install::state_install::DestChoice::Clear);
+        app.install_screen_state.pipeline_kind = PipelineKind::Install;
+
+        let inputs = LivePipelineInputs::from_workflow(
+            &app,
+            crate::install_runtime::flag_policies::InstallWorkflow::PasteAndInstall,
+        );
+        finish_pipeline_arm_after_destination_prep(&mut app, &inputs);
+
+        let err = app
+            .install_screen_state
+            .pipeline_arm_error
+            .as_deref()
+            .expect("arm error");
+        assert!(err.contains("could not be replaced"), "got {err:?}");
+        let old = app.registry.find("OLD").expect("OLD still present");
+        assert_eq!(old.destination_folder, dest_s);
     }
 }

@@ -3,8 +3,10 @@
 
 use eframe::egui;
 
+use crate::registry::destination_claim::{
+    ClaimContext, DestinationClaim, resolve_destination_claim,
+};
 use crate::registry::model::{Game, ModlistRegistry};
-use crate::registry::operations::{DestinationOwnership, classify_destination};
 use crate::ui::create::state_create::CreateScreenState;
 use crate::ui::install::sub_flow_footer::{self, PrimaryBtn};
 use crate::ui::install::{destination_not_empty, destination_owned};
@@ -49,18 +51,26 @@ pub fn render(
     active_install_id: Option<&str>,
 ) -> ChooseOutcome {
     let mut outcome = ChooseOutcome::Stay;
-    let mut ownership = DestinationOwnership::Free;
+    let mut claim = DestinationClaim::Free;
 
     let body_h = (ui.available_height() - sub_flow_footer::FOOTER_HEIGHT_PX).max(0.0);
     ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                render_body(ui, palette, state, &mut outcome, registry, &mut ownership);
+                render_body(
+                    ui,
+                    palette,
+                    state,
+                    &mut outcome,
+                    registry,
+                    active_install_id,
+                    &mut claim,
+                );
             });
     });
 
-    let proceed_ok = destination_owned::proceed_allowed(&ownership, active_install_id);
+    let proceed_ok = !claim.blocks();
 
     let footer = sub_flow_footer::render(
         ui,
@@ -91,10 +101,11 @@ fn render_body(
     state: &mut CreateScreenState,
     outcome: &mut ChooseOutcome,
     registry: &ModlistRegistry,
-    ownership: &mut DestinationOwnership,
+    active_install_id: Option<&str>,
+    claim: &mut DestinationClaim,
 ) {
     render_title_row(ui, palette, outcome);
-    render_setup_box(ui, palette, state, registry, ownership);
+    render_setup_box(ui, palette, state, registry, active_install_id, claim);
 }
 
 fn render_title_row(ui: &mut egui::Ui, palette: ThemePalette, outcome: &mut ChooseOutcome) {
@@ -136,7 +147,8 @@ fn render_setup_box(
     palette: ThemePalette,
     state: &mut CreateScreenState,
     registry: &ModlistRegistry,
-    ownership: &mut DestinationOwnership,
+    active_install_id: Option<&str>,
+    claim: &mut DestinationClaim,
 ) {
     redesign_box(ui, palette, None, |ui| {
         ui.spacing_mut().item_spacing.y = 14.0;
@@ -199,11 +211,15 @@ fn render_setup_box(
             })
             .inner;
 
-        *ownership = classify_destination(&state.destination, registry);
-        let hard_block = matches!(
-            *ownership,
-            DestinationOwnership::InsideOwner(_) | DestinationOwnership::ContainsOwners(_)
+        *claim = resolve_destination_claim(
+            registry,
+            &ClaimContext {
+                destination: &state.destination,
+                held_id: None,
+                installing_id: active_install_id,
+            },
         );
+        let hard_block = claim.blocks();
 
         let dest_changed = folder_input(
             ui,
@@ -218,8 +234,8 @@ fn render_setup_box(
             state.destination_choice = None;
         }
 
-        if !matches!(*ownership, DestinationOwnership::Free) {
-            destination_owned::render(ui, palette, ownership, registry);
+        if !matches!(*claim, DestinationClaim::Free) {
+            destination_owned::render(ui, palette, claim, registry);
         }
 
         if !hard_block
