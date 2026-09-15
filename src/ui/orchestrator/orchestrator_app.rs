@@ -1446,11 +1446,9 @@ pub fn reset_install_pipeline_state(set: InstallPipelineResetSet<'_>) {
 }
 
 pub(crate) fn source_probe_deferred(debounce: &HashMap<&'static str, Instant>) -> bool {
-    debounce.contains_key(crate::ui::settings::validate_now::FIELD_BGEE_GAME_FOLDER)
-        || debounce.contains_key(crate::ui::settings::validate_now::FIELD_EET_BGEE_GAME_FOLDER)
-        || debounce.contains_key(crate::ui::settings::validate_now::FIELD_BG2EE_GAME_FOLDER)
-        || debounce.contains_key(crate::ui::settings::validate_now::FIELD_IWDEE_GAME_FOLDER)
-        || debounce.contains_key(crate::ui::settings::validate_now::FIELD_EET_BG2EE_GAME_FOLDER)
+    debounce
+        .keys()
+        .any(|field| crate::ui::settings::validate_now::is_game_folder_field(field))
 }
 
 fn refresh_source_compatibility(app: &mut OrchestratorApp) {
