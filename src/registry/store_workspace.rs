@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Born2BSalty
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::platform_defaults::app_config_dir;
 use crate::registry::errors::RegistryError;
@@ -11,11 +12,34 @@ const MODLISTS_DIR: &str = "modlists";
 
 const WORKSPACE_FILE_NAME: &str = "workspace.json";
 
+static MODLIST_DATA_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+fn modlist_data_root_mutex() -> &'static Mutex<Option<PathBuf>> {
+    MODLIST_DATA_ROOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) fn set_modlist_data_root(root: Option<PathBuf>) {
+    if let Ok(mut guard) = modlist_data_root_mutex().lock() {
+        *guard = root;
+    }
+}
+
+fn modlist_data_root() -> Option<PathBuf> {
+    modlist_data_root_mutex()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
 #[must_use]
 pub fn modlist_data_dir(modlist_id: &str) -> PathBuf {
-    app_config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(MODLISTS_DIR)
+    modlist_data_root()
+        .unwrap_or_else(|| {
+            app_config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(MODLISTS_DIR)
+        })
         .join(modlist_id)
 }
 
