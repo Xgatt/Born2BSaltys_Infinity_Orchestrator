@@ -22,6 +22,7 @@ pub(crate) struct ForkedModlistInput<'a> {
     pub(crate) parent_forked_from: &'a [ForkAncestor],
     pub(crate) parent_mod_count: u32,
     pub(crate) parent_component_count: u32,
+    pub(crate) parent_description: Option<&'a str>,
 }
 
 pub fn create_modlist(
@@ -102,6 +103,12 @@ pub(crate) fn create_forked_modlist(
         author: input.parent_author.to_string(),
     });
 
+    let description = input
+        .parent_description
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let entry = ModlistEntry {
         id: id.clone(),
         name: trimmed.to_string(),
@@ -111,6 +118,7 @@ pub(crate) fn create_forked_modlist(
         creation_date: now,
         last_touched_date: now,
         author,
+        description,
         forked_from,
         mod_count: input.parent_mod_count,
         component_count: input.parent_component_count,
@@ -146,6 +154,7 @@ mod tests {
             parent_forked_from,
             parent_mod_count: 0,
             parent_component_count: 0,
+            parent_description: None,
         }
     }
 
@@ -371,6 +380,43 @@ mod tests {
         .expect("ok");
         assert_eq!(parent_chain.len(), 1, "caller's parent chain untouched");
         assert_eq!(parent_chain[0].name, "Root");
+    }
+
+    #[test]
+    fn forked_modlist_inherits_the_parent_description() {
+        let mut reg = ModlistRegistry::default();
+        let input = ForkedModlistInput {
+            parent_description: Some("A tactical build with fixpack"),
+            ..fork_input(
+                "My EET fork",
+                Game::EET,
+                "D:\\fork",
+                "@me",
+                "Parent",
+                "@p",
+                &[],
+            )
+        };
+        let child = create_forked_modlist(input, &mut reg).expect("fork ok");
+        assert_eq!(
+            child.description.as_deref(),
+            Some("A tactical build with fixpack")
+        );
+
+        let blank_input = ForkedModlistInput {
+            parent_description: Some("   "),
+            ..fork_input(
+                "Another fork",
+                Game::EET,
+                "D:\\fork2",
+                "@me",
+                "Parent",
+                "@p",
+                &[],
+            )
+        };
+        let blank_child = create_forked_modlist(blank_input, &mut reg).expect("fork ok");
+        assert_eq!(blank_child.description, None, "blank description ⇒ None");
     }
 
     use std::io::{Read as _, Write as _};

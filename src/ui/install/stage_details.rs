@@ -58,6 +58,7 @@ pub(crate) struct DetailsHeader {
     pub(crate) version: Option<String>,
     pub(crate) game: Game,
     pub(crate) description: Option<String>,
+    pub(crate) fork_note: Option<String>,
     pub(crate) tags: Vec<String>,
     pub(crate) sample: bool,
     pub(crate) requirements: String,
@@ -75,6 +76,7 @@ impl DetailsHeader {
             version: Some(entry.version.to_string()),
             game: entry.game,
             description: Some(entry.description.to_string()),
+            fork_note: None,
             tags: entry.tags.iter().map(|tag| (*tag).to_string()).collect(),
             sample: entry.sample,
             requirements: entry.requirements.to_string(),
@@ -105,6 +107,12 @@ impl DetailsHeader {
             version: None,
             game,
             description: preview
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            fork_note: preview
                 .forked_from
                 .last()
                 .filter(|parent| !parent.name.trim().is_empty())
@@ -308,6 +316,18 @@ fn header_row(
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(description)
+                                .size(14.0)
+                                .family(egui::FontFamily::Name("poppins_light".into()))
+                                .color(redesign_text_muted(palette)),
+                        )
+                        .wrap(),
+                    );
+                }
+                if let Some(fork_note) = &header.fork_note {
+                    ui.add_space(6.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(fork_note)
                                 .size(14.0)
                                 .family(egui::FontFamily::Name("poppins_light".into()))
                                 .color(redesign_text_muted(palette)),
@@ -521,6 +541,7 @@ mod tests {
             allow_auto_install: true,
             name: None,
             author: None,
+            description: None,
             forked_from: Vec::new(),
         }
     }
@@ -559,6 +580,7 @@ mod tests {
         assert_eq!(header.author, None);
         assert_eq!(header.version, None);
         assert_eq!(header.description, None);
+        assert_eq!(header.fork_note, None);
         assert!(header.tags.is_empty());
         assert_eq!(header.requirements, requirements_for(Game::EET));
         assert_eq!(header.built_with, None);
@@ -585,12 +607,33 @@ mod tests {
         ];
         let header = DetailsHeader::from_preview(&preview, "", ReviewOrigin::Paste);
 
+        assert_eq!(header.description, None);
         assert_eq!(
-            header.description.as_deref(),
+            header.fork_note.as_deref(),
             Some("Forked from Parent, by @parent.")
         );
         assert_eq!(header.tags, vec!["Fork".to_string()]);
         assert_eq!(header.lineage.len(), 2);
+    }
+
+    #[test]
+    fn code_header_carries_a_trimmed_description_and_the_fork_note_stays_separate() {
+        let mut preview = eet_preview("0.2.0");
+        preview.description = Some("  BG2EE with the fixpack  ".to_string());
+        preview.forked_from = vec![ForkAncestor {
+            name: "Root build".to_string(),
+            author: "@root".to_string(),
+        }];
+        let header = DetailsHeader::from_preview(&preview, "", ReviewOrigin::Paste);
+
+        assert_eq!(
+            header.description.as_deref(),
+            Some("BG2EE with the fixpack")
+        );
+        assert_eq!(
+            header.fork_note.as_deref(),
+            Some("Forked from Root build, by @root.")
+        );
     }
 
     #[test]

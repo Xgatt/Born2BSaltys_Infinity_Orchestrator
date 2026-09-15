@@ -375,6 +375,7 @@ fn preview(
         allow_auto_install: true,
         name: None,
         author: None,
+        description: None,
         forked_from: Vec::new(),
     }
 }

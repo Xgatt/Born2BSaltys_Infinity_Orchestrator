@@ -111,11 +111,7 @@ fn render_draft_list(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 10.0;
                 for entry in in_progress {
-                    apply_card_action(
-                        outcome,
-                        modlist_card::render(ui, palette, entry, None),
-                        entry,
-                    );
+                    apply_card_action(outcome, modlist_card::render(ui, palette, entry), entry);
                 }
             });
     }
@@ -155,7 +151,7 @@ fn apply_card_action(
         ModlistCardActions::Resume => {
             *outcome = LoadDraftOutcome::Resume(entry.id.clone());
         }
-        ModlistCardActions::CopyImportCode => {
+        ModlistCardActions::ShareModlist => {
             *outcome = LoadDraftOutcome::CopyImportCode(entry.id.clone());
         }
         ModlistCardActions::Delete => {

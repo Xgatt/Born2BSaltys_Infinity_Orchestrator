@@ -16,9 +16,13 @@ use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::{
     DestinationPrepFlow, OrchestratorApp, PendingWorkspaceDestinationPrep,
 };
+use crate::ui::orchestrator::widgets::dialogs::share_modlist_dialog::{
+    self, ShareModlistDialog, ShareOutcome,
+};
+use crate::ui::orchestrator::widgets::share_actions;
 use crate::ui::step5::action_step5::Step5Action;
 use crate::ui::workspace::step5::state_workspace_step5::PostInstallAction;
-use crate::ui::workspace::step5::{post_install_actions, share_paste_code_dialog, success_banner};
+use crate::ui::workspace::step5::{post_install_actions, success_banner};
 
 pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, modlist_id: &str) {
     if orchestrator.workspace_step5.install_clicked
@@ -95,12 +99,52 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, modlist_id:
     if orchestrator.workspace_step5.share_dialog_open {
         let ctx = ui.ctx().clone();
         let entry_for_dialog = entry.unwrap_or_default();
-        share_paste_code_dialog::render(
-            &ctx,
-            palette,
-            &mut orchestrator.workspace_step5,
-            &entry_for_dialog,
-        );
+        apply_share_dialog(orchestrator, &ctx, &entry_for_dialog, palette);
+    }
+}
+
+fn apply_share_dialog(
+    orchestrator: &mut OrchestratorApp,
+    ctx: &egui::Context,
+    entry: &crate::registry::model::ModlistEntry,
+    palette: crate::ui::shared::redesign_tokens::ThemePalette,
+) {
+    let code = entry
+        .latest_share_code
+        .as_deref()
+        .filter(|c| !c.trim().is_empty());
+
+    let outcome = share_modlist_dialog::render(
+        ctx,
+        palette,
+        &ShareModlistDialog {
+            id_salt: "workspace_step5",
+            modlist_name: &entry.name,
+            has_code: code.is_some(),
+        },
+    );
+
+    match outcome {
+        ShareOutcome::ExportFile => {
+            if let Some(code) = code {
+                share_actions::export_modlist_file(
+                    &entry.name,
+                    code,
+                    &mut orchestrator.notification_manager,
+                );
+            }
+            orchestrator.workspace_step5.share_dialog_open = false;
+        }
+        ShareOutcome::CopyCode => {
+            if let Some(code) = code {
+                share_actions::copy_share_code(ctx, &entry.name, code);
+            }
+            orchestrator.workspace_step5.share_dialog_open = false;
+        }
+        ShareOutcome::Closed => {
+            orchestrator.workspace_step5.share_dialog_open = false;
+        }
+        ShareOutcome::Pending => {}
     }
 }
 

@@ -216,6 +216,7 @@ fn sync_share_provenance(
         orchestrator.wizard_state.set_modlist_share_provenance(
             Some(entry.name.clone()),
             entry.author.clone(),
+            entry.description.clone(),
             entry.forked_from.clone(),
         );
         return;
@@ -225,6 +226,7 @@ fn sync_share_provenance(
         orchestrator.wizard_state.set_modlist_share_provenance(
             preview.name.clone(),
             preview.author.clone(),
+            preview.description.clone(),
             preview.forked_from.clone(),
         );
     }

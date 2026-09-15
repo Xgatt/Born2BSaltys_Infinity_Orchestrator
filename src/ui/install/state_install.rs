@@ -24,13 +24,14 @@ pub enum ReviewOrigin {
     Details,
     Paste,
     Reinstall,
+    File,
 }
 
 impl ReviewOrigin {
     #[must_use]
     pub const fn back_stage(self) -> InstallStage {
         match self {
-            Self::Details | Self::Reinstall => InstallStage::Gallery,
+            Self::Details | Self::Reinstall | Self::File => InstallStage::Gallery,
             Self::Paste => InstallStage::Paste,
         }
     }
@@ -611,6 +612,7 @@ mod tests {
             allow_auto_install: true,
             name: None,
             author: None,
+            description: None,
             forked_from: Vec::new(),
         };
         let mut st = InstallScreenState {

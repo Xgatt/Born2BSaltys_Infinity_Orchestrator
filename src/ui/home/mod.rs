@@ -3,6 +3,7 @@
 
 pub mod add_a_modlist;
 pub mod confirm_delete;
+pub mod edit_modlist_dialog;
 pub mod filter_chip;
 pub mod first_launch_setup_card;
 pub mod game_installs_detected;

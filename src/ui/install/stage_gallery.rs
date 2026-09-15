@@ -22,11 +22,12 @@ pub enum GalleryOutcome {
     #[default]
     Stay,
     OpenPaste,
+    OpenFile,
     OpenDetails(usize),
 }
 
 const GAME_OPTIONS: [Game; 4] = [Game::BGEE, Game::BG2EE, Game::IWDEE, Game::EET];
-const PASTE_BTN_W_PX: f32 = 190.0;
+const TITLE_ROW_BUTTONS_W_PX: f32 = 380.0;
 const GAME_COMBO_W_PX: f32 = 170.0;
 const STARTER_CHECK_W_PX: f32 = 170.0;
 
@@ -38,7 +39,7 @@ pub fn render(
     let mut outcome = GalleryOutcome::Stay;
 
     ui.horizontal_top(|ui| {
-        let title_w = (ui.available_width() - PASTE_BTN_W_PX).max(200.0);
+        let title_w = (ui.available_width() - TITLE_ROW_BUTTONS_W_PX).max(200.0);
         ui.allocate_ui_with_layout(
             egui::vec2(title_w, ui.available_height()),
             egui::Layout::top_down(egui::Align::Min),
@@ -52,6 +53,9 @@ pub fn render(
             },
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            if redesign_btn(ui, palette, "Install from file", BtnOpts::default()).clicked() {
+                outcome = GalleryOutcome::OpenFile;
+            }
             if redesign_btn(ui, palette, "Paste share code", BtnOpts::default()).clicked() {
                 outcome = GalleryOutcome::OpenPaste;
             }

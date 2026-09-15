@@ -33,6 +33,8 @@ pub struct ShareMeta {
 
     pub author: Option<String>,
 
+    pub description: Option<String>,
+
     pub(crate) forked_from: Vec<ForkAncestor>,
 
     pub archive_meta: Vec<ArchiveMeta>,
@@ -48,10 +50,17 @@ impl ShareMeta {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        let description = entry
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
         Self {
             allow_auto_install,
             name,
             author,
+            description,
             forked_from: entry.forked_from.clone(),
 
             archive_meta: Vec::new(),
@@ -89,6 +98,12 @@ pub fn pack_meta(wizard_state: &WizardState, meta: &ShareMeta) -> Result<String,
     }
     if let Some(author) = &meta.author {
         obj.insert("author".to_string(), Value::String(author.clone()));
+    }
+    if let Some(description) = &meta.description {
+        obj.insert(
+            "description".to_string(),
+            Value::String(description.clone()),
+        );
     }
     if !meta.forked_from.is_empty() {
         let lineage = meta
@@ -156,6 +171,38 @@ pub fn set_packed_name(code: &str, name: &str) -> Result<String, String> {
         .as_object_mut()
         .ok_or_else(|| "share payload was not a JSON object".to_string())?;
     obj.insert("name".to_string(), Value::String(name.to_string()));
+
+    let out_bytes =
+        serde_json::to_vec(&payload).map_err(|err| format!("re-serialize failed: {err}"))?;
+    let recompressed = zlib_compress(&out_bytes)?;
+    Ok(format!(
+        "{SHARE_CODE_PREFIX}{}",
+        base64url_encode(&recompressed)
+    ))
+}
+
+pub fn set_packed_description(code: &str, description: &str) -> Result<String, String> {
+    let encoded = code
+        .trim()
+        .strip_prefix(SHARE_CODE_PREFIX)
+        .ok_or_else(|| "share code did not start with BIO-MODLIST-V1:".to_string())?;
+    let compressed = base64url_decode(encoded)?;
+    let json_bytes = zlib_decompress(&compressed)?;
+    let mut payload: Value = serde_json::from_slice(&json_bytes)
+        .map_err(|err| format!("share payload was not valid JSON: {err}"))?;
+
+    let obj = payload
+        .as_object_mut()
+        .ok_or_else(|| "share payload was not a JSON object".to_string())?;
+    let trimmed = description.trim();
+    if trimmed.is_empty() {
+        obj.remove("description");
+    } else {
+        obj.insert(
+            "description".to_string(),
+            Value::String(trimmed.to_string()),
+        );
+    }
 
     let out_bytes =
         serde_json::to_vec(&payload).map_err(|err| format!("re-serialize failed: {err}"))?;
@@ -431,6 +478,12 @@ mod tests {
         if let Some(author) = &meta.author {
             obj.insert("author".to_string(), Value::String(author.clone()));
         }
+        if let Some(description) = &meta.description {
+            obj.insert(
+                "description".to_string(),
+                Value::String(description.clone()),
+            );
+        }
         if !meta.forked_from.is_empty() {
             let lineage = meta
                 .forked_from
@@ -474,6 +527,7 @@ mod tests {
             allow_auto_install: false,
             name: None,
             author: None,
+            description: None,
             forked_from: vec![],
             archive_meta: vec![],
         };
@@ -484,6 +538,7 @@ mod tests {
 
         assert!(v.get("name").is_none());
         assert!(v.get("author").is_none());
+        assert!(v.get("description").is_none());
         assert!(v.get("forked_from").is_none());
 
         assert_eq!(v["game_install"], json!("EET"));
@@ -501,6 +556,7 @@ mod tests {
             allow_auto_install: true,
             name: Some("Polished BG2EE".to_string()),
             author: Some("@b2bs".to_string()),
+            description: Some("BG2EE with the fixpack".to_string()),
             forked_from: vec![
                 ForkAncestor {
                     name: "EET Basics".to_string(),
@@ -518,6 +574,7 @@ mod tests {
         assert_eq!(v["allow_auto_install"], json!(true));
         assert_eq!(v["name"], json!("Polished BG2EE"));
         assert_eq!(v["author"], json!("@b2bs"));
+        assert_eq!(v["description"], json!("BG2EE with the fixpack"));
 
         assert_eq!(
             v["forked_from"],
@@ -536,6 +593,7 @@ mod tests {
             name: "  Trimmed Name  ".to_string(),
             game: Game::EET,
             author: Some("   ".to_string()),
+            description: Some("   ".to_string()),
             forked_from: vec![ForkAncestor {
                 name: "Root".to_string(),
                 author: "@root".to_string(),
@@ -549,6 +607,7 @@ mod tests {
             meta.author, None,
             "whitespace author ⇒ omitted (SPEC §13.3)"
         );
+        assert_eq!(meta.description, None, "whitespace description ⇒ omitted");
         assert_eq!(meta.forked_from.len(), 1);
 
         let entry2 = ModlistEntry {
@@ -567,6 +626,7 @@ mod tests {
                 allow_auto_install: false,
                 name: Some("X".to_string()),
                 author: None,
+                description: None,
                 forked_from: vec![],
                 archive_meta: vec![],
             },
@@ -578,6 +638,7 @@ mod tests {
                 allow_auto_install: true,
                 name: Some("X".to_string()),
                 author: Some("@me".to_string()),
+                description: Some("Now with a description".to_string()),
                 forked_from: vec![],
                 archive_meta: vec![],
             },
@@ -720,6 +781,85 @@ mod tests {
         assert!(set_packed_name("BIO-MODLIST-V1:!!!not-base64!!!", "X").is_err());
     }
 
+    #[test]
+    fn pack_meta_injects_the_description_and_omits_it_when_absent() {
+        let base = make_base(&json!({
+            "format_version": 1,
+            "game_install": "BGEE",
+            "install_mode": "build_from_scanned_mods",
+        }));
+        let with_description = ShareMeta {
+            allow_auto_install: true,
+            name: None,
+            author: None,
+            description: Some("BG2EE with the fixpack".to_string()),
+            forked_from: vec![],
+            archive_meta: vec![],
+        };
+        let code = pack_meta_envelope_only(&base, &with_description).expect("pack");
+        let v = decode_payload(&code);
+        assert_eq!(v["description"], json!("BG2EE with the fixpack"));
+
+        let without_description = ShareMeta {
+            description: None,
+            ..with_description
+        };
+        let code = pack_meta_envelope_only(&base, &without_description).expect("pack");
+        let v = decode_payload(&code);
+        assert!(v.get("description").is_none());
+    }
+
+    #[test]
+    fn set_packed_description_overwrites_the_key_and_preserves_all_other_keys() {
+        let original = make_base(&json!({
+            "format_version": 1,
+            "bio_version": "0.1.0-test",
+            "game_install": "EET",
+            "install_mode": "build_from_scanned_mods",
+            "allow_auto_install": true,
+            "name": "Some Name",
+            "author": "@sharer",
+            "description": "Old description",
+            "forked_from": [{ "name": "Root", "author": "@root" }],
+        }));
+
+        let updated = set_packed_description(&original, "New description").expect("update ok");
+        let v = decode_payload(&updated);
+
+        assert_eq!(v["description"], json!("New description"));
+        assert_eq!(v["name"], json!("Some Name"));
+        assert_eq!(v["author"], json!("@sharer"));
+        assert_eq!(v["allow_auto_install"], json!(true));
+        assert_eq!(v["game_install"], json!("EET"));
+        assert_eq!(v["install_mode"], json!("build_from_scanned_mods"));
+        assert_eq!(v["bio_version"], json!("0.1.0-test"));
+        assert_eq!(
+            v["forked_from"],
+            json!([{ "name": "Root", "author": "@root" }])
+        );
+    }
+
+    #[test]
+    fn set_packed_description_with_blank_removes_the_key() {
+        let original = make_base(&json!({
+            "format_version": 1,
+            "game_install": "EET",
+            "description": "Old description",
+        }));
+
+        let updated = set_packed_description(&original, "   ").expect("update ok");
+        let v = decode_payload(&updated);
+
+        assert!(v.get("description").is_none());
+        assert_eq!(v["game_install"], json!("EET"));
+    }
+
+    #[test]
+    fn set_packed_description_errs_on_non_bio_code() {
+        assert!(set_packed_description("not a share code", "X").is_err());
+        assert!(set_packed_description("BIO-MODLIST-V1:!!!not-base64!!!", "X").is_err());
+    }
+
     fn am(name: &str, size: u64, hash: &str) -> ArchiveMeta {
         ArchiveMeta {
             name: name.to_string(),
@@ -735,6 +875,7 @@ mod tests {
             allow_auto_install: false,
             name: Some("Tactical".to_string()),
             author: None,
+            description: None,
             forked_from: vec![],
             archive_meta: vec![
                 am("a__github__v1.zip", 17, "deadbeef00000000deadbeef00000000"),
@@ -764,6 +905,7 @@ mod tests {
             allow_auto_install: true,
             name: None,
             author: None,
+            description: None,
             forked_from: vec![],
             archive_meta: vec![],
         };

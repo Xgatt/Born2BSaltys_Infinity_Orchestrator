@@ -799,6 +799,7 @@ mod tests {
             allow_auto_install: true,
             name: Some("From the code".to_string()),
             author: None,
+            description: None,
             forked_from: Vec::new(),
         };
         assert_eq!(display_name("  Typed  ", &preview), "Typed");
