@@ -18,6 +18,7 @@ pub mod per_install_dirs;
 pub mod rail_lock_reason;
 pub mod registry_transition;
 pub mod reinstall_route;
+pub mod replaced_owners;
 pub mod settings_sanitizer;
 pub mod start_hooks;
 pub mod stream_downloader;

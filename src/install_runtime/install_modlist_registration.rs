@@ -7,6 +7,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 
 use crate::app::modlist_share::ModlistSharePreview;
+use crate::install_runtime::replaced_owners;
 use crate::install_runtime::start_hooks::{self, InstallButtonVariant};
 use crate::registry::destination_claim::{
     ClaimContext, DestinationClaim, resolve_destination_claim,
@@ -14,18 +15,11 @@ use crate::registry::destination_claim::{
 use crate::registry::errors::RegistryError;
 use crate::registry::ids::new_modlist_id;
 use crate::registry::model::{Game, ModlistEntry, ModlistRegistry, ModlistState};
-use crate::registry::operations;
-use crate::registry::store_workspace::{self, WorkspaceStore};
+use crate::registry::store_workspace::WorkspaceStore;
 use crate::registry::workspace_model::ModlistWorkspaceState;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 
 const FALLBACK_NAME: &str = "Shared modlist";
-
-pub(crate) struct ReplacedEntry {
-    pub(crate) entries: Vec<(usize, ModlistEntry)>,
-    pub(crate) data_dirs: Vec<PathBuf>,
-    pub(crate) replacement_id: Option<String>,
-}
 
 pub(crate) fn register_install_modlist_paste(
     preview: &ModlistSharePreview,
@@ -100,58 +94,14 @@ fn replace_existing_destination_entries(
         ));
     };
 
-    let mut snapshots: Vec<(usize, ModlistEntry)> = Vec::with_capacity(old_ids.len());
-    for old_id in old_ids {
-        let Some(index) = orchestrator
-            .registry
-            .entries
-            .iter()
-            .position(|e| e.id == *old_id)
-        else {
-            warn!(
-                target = "orchestrator",
-                "early_mint_modlist_id: replaced entry {old_id} vanished from the registry"
-            );
-            return Err(format!(
-                "the modlist at {destination} could not be replaced: it is no longer in the registry"
-            ));
-        };
-        snapshots.push((index, orchestrator.registry.entries[index].clone()));
-    }
-
-    let mut removed: Vec<(usize, ModlistEntry)> = Vec::new();
-    for (old_index, old_entry) in snapshots {
-        let old_id = old_entry.id.clone();
-        let old_name = old_entry.name.clone();
-        let remove_result = operations::remove_entry_keep_folder(
-            &old_id,
-            &orchestrator.registry_store,
-            &mut orchestrator.registry,
-        );
-        if let Err(err) = remove_result {
-            removed.push((old_index, old_entry));
-            reinsert_removed(orchestrator, &removed);
-            warn!(
-                target = "orchestrator",
-                "early_mint_modlist_id: removing the replaced entry {old_id} failed: {err}"
-            );
-            return Err(format!("'{old_name}' could not be replaced: {err}"));
-        }
-        orchestrator.workspace_state.remove(&old_id);
-        orchestrator.workspace_stores.remove(&old_id);
-        removed.push((old_index, old_entry));
-    }
-
-    let old_names: Vec<String> = removed.iter().map(|(_, e)| e.name.clone()).collect();
-    let data_dirs: Vec<PathBuf> = removed
+    let old_names: Vec<String> = old_ids
         .iter()
-        .map(|(_, e)| store_workspace::modlist_data_dir(&e.id))
+        .filter_map(|id| orchestrator.registry.find(id).map(|e| e.name.clone()))
         .collect();
-    orchestrator.pending_replaced_entry = Some(ReplacedEntry {
-        entries: removed,
-        data_dirs,
-        replacement_id: None,
-    });
+
+    let held = replaced_owners::hold_owners(orchestrator, old_ids)
+        .map_err(|err| format!("the modlist at {destination} could not be replaced: {err}"))?;
+    orchestrator.pending_replaced_entry = Some(held);
 
     let entry =
         match register_install_modlist_paste(&preview, destination, &mut orchestrator.registry) {
@@ -180,24 +130,6 @@ fn replace_existing_destination_entries(
         entry.name
     );
     Ok((entry.id, true))
-}
-
-fn reinsert_removed(orchestrator: &mut OrchestratorApp, removed: &[(usize, ModlistEntry)]) {
-    let mut ordered: Vec<&(usize, ModlistEntry)> = removed.iter().collect();
-    ordered.sort_by_key(|(index, _)| *index);
-    for (index, entry) in ordered {
-        if !orchestrator
-            .registry
-            .entries
-            .iter()
-            .any(|e| e.id == entry.id)
-        {
-            orchestrator.registry.entries.insert(
-                (*index).min(orchestrator.registry.entries.len()),
-                entry.clone(),
-            );
-        }
-    }
 }
 
 pub fn early_mint_modlist_id(
@@ -252,32 +184,9 @@ pub fn early_mint_modlist_id(
 }
 
 fn restore_pending_replaced_entry(orchestrator: &mut OrchestratorApp) {
-    let Some(replaced) = orchestrator.pending_replaced_entry.take() else {
-        return;
-    };
-    if let Some(replacement_id) = replaced.replacement_id {
-        orchestrator
-            .registry
-            .entries
-            .retain(|e| e.id != replacement_id);
-        orchestrator.workspace_state.remove(&replacement_id);
-        orchestrator.workspace_stores.remove(&replacement_id);
+    if let Some(held) = orchestrator.pending_replaced_entry.take() {
+        replaced_owners::restore_owners(orchestrator, held);
     }
-    let restored_ids: Vec<String> = replaced.entries.iter().map(|(_, e)| e.id.clone()).collect();
-    reinsert_removed(orchestrator, &replaced.entries);
-    if let Err(err) = orchestrator.registry_store.save(&orchestrator.registry) {
-        warn!(
-            target = "orchestrator",
-            "restore_pending_replaced_entry: registry persist failed: {err}"
-        );
-    }
-    orchestrator
-        .persistence_cycle
-        .mark_registry_dirty(std::time::Instant::now());
-    info!(
-        target = "orchestrator",
-        "restore_pending_replaced_entry: restored {restored_ids:?} after a failed replace"
-    );
 }
 
 pub fn rollback_early_minted_entry(orchestrator: &mut OrchestratorApp, id: &str) {
@@ -365,42 +274,8 @@ pub fn register_and_write_install_start_artifacts(
 }
 
 fn finalize_pending_replaced_entry(orchestrator: &mut OrchestratorApp, started_id: &str) {
-    let Some(replaced) = orchestrator.pending_replaced_entry.take() else {
-        return;
-    };
-    if replaced.entries.iter().any(|(_, e)| e.id == started_id) {
-        warn!(
-            target = "orchestrator",
-            "finalize_pending_replaced_entry: the started install is one of the replaced \
-             entries {started_id}; nothing to remove"
-        );
-        return;
-    }
-    for ((_, entry), data_dir) in replaced.entries.iter().zip(replaced.data_dirs.iter()) {
-        if entry.id.trim().is_empty() {
-            warn!(
-                target = "orchestrator",
-                "finalize_pending_replaced_entry: refusing to remove a data dir for a blank id"
-            );
-            continue;
-        }
-        if let Err(err) = std::fs::remove_dir_all(data_dir)
-            && err.kind() != std::io::ErrorKind::NotFound
-        {
-            warn!(
-                target = "orchestrator",
-                "finalize_pending_replaced_entry: removing {} for the replaced entry \
-                 {} failed: {err}",
-                data_dir.display(),
-                entry.id
-            );
-        }
-        info!(
-            target = "orchestrator",
-            "finalize_pending_replaced_entry: the replaced entry {}'s data dir was \
-             removed after the new install started successfully",
-            entry.id
-        );
+    if let Some(held) = orchestrator.pending_replaced_entry.take() {
+        replaced_owners::finalize_owners(held, started_id);
     }
 }
 
@@ -846,12 +721,11 @@ mod tests {
             .expect("replaced")
             .expect("minted");
         assert!(minted);
-        let old_data_dir = app
-            .pending_replaced_entry
-            .as_ref()
-            .expect("a replace leaves a pending replaced entry")
-            .data_dirs[0]
-            .clone();
+        let old_data_dir = crate::registry::store_workspace::modlist_data_dir("EXISTING00001");
+        assert!(
+            app.pending_replaced_entry.is_some(),
+            "a replace leaves a pending replaced entry"
+        );
         std::fs::create_dir_all(&old_data_dir).expect("seed the old data dir");
         assert!(old_data_dir.is_dir());
 
@@ -1165,10 +1039,10 @@ mod tests {
     #[test]
     fn finalize_refuses_a_blank_id() {
         let mut app = OrchestratorApp::new_isolated_for_test("finalize-blank");
-        let dir = std::env::temp_dir().join(format!("bio_finalize_blank_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        let guard = TempDirGuard(dir.clone());
-        app.pending_replaced_entry = Some(ReplacedEntry {
+        let keep_dir = crate::registry::store_workspace::modlist_data_dir("KEEP00000001");
+        std::fs::create_dir_all(&keep_dir).expect("mkdir");
+        let guard = TempDirGuard(keep_dir.clone());
+        app.pending_replaced_entry = Some(replaced_owners::HeldOwners {
             entries: vec![(
                 0,
                 ModlistEntry {
@@ -1176,13 +1050,15 @@ mod tests {
                     ..Default::default()
                 },
             )],
-            data_dirs: vec![dir.clone()],
             replacement_id: None,
         });
 
         finalize_pending_replaced_entry(&mut app, "NEWID0000001");
 
-        assert!(dir.is_dir(), "a blank id's data dir is never removed");
+        assert!(
+            keep_dir.is_dir(),
+            "a sibling folder must survive a blank id's refusal"
+        );
         assert!(app.pending_replaced_entry.is_none());
         drop(guard);
     }

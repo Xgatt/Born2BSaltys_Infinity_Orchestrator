@@ -271,8 +271,7 @@ pub struct OrchestratorApp {
 
     pub(crate) pending_reinstall_id: Option<String>,
 
-    pub(crate) pending_replaced_entry:
-        Option<crate::install_runtime::install_modlist_registration::ReplacedEntry>,
+    pub(crate) pending_replaced_entry: Option<crate::install_runtime::replaced_owners::HeldOwners>,
 
     pub(crate) active_install_modlist_id: Option<String>,
 

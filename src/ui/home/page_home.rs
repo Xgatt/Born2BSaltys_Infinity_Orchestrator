@@ -4,19 +4,19 @@
 use eframe::egui;
 
 use crate::registry::model::{ModlistEntry, ModlistState};
-use crate::registry::operations::{self, remove_entry_and_save, spawn_delete_folder_worker};
+use crate::registry::operations;
 use crate::registry::operations_rename;
 use crate::ui::home::add_a_modlist::{self, AddAModlistAction};
 use crate::ui::home::confirm_delete;
+use crate::ui::home::delete_modlist;
 use crate::ui::home::edit_modlist_dialog::{self, EditModlistDialog, EditOutcome};
-use crate::ui::home::modlist_card::ModlistCardActions;
+use crate::ui::home::modlist_card::{CardMenu, ModlistCardActions};
 use crate::ui::home::reinstall_route_wire;
 use crate::ui::home::state_home::{HomeFilter, empty_filter_message};
 use crate::ui::home::{filter_chip, first_launch_setup_card, modlist_card};
 use crate::ui::install::state_install::install_stage_is_idle;
 use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
-use crate::ui::orchestrator::orchestrator_app::PendingFolderDelete;
 use crate::ui::orchestrator::widgets::dialogs::confirm_dialog::{self, ConfirmOutcome};
 use crate::ui::orchestrator::widgets::dialogs::share_modlist_dialog::{
     self, ShareModlistDialog, ShareOutcome,
@@ -359,39 +359,7 @@ fn render_delete_confirm(orchestrator: &mut OrchestratorApp, ctx: &egui::Context
     match outcome {
         ConfirmOutcome::Confirmed => {
             orchestrator.home_screen_state.delete_target = None;
-            let name = entry.name;
-            match remove_entry_and_save(
-                &id,
-                &orchestrator.registry_store,
-                &mut orchestrator.registry,
-            ) {
-                Ok(Some(target)) => {
-                    orchestrator.persistence_cycle.last_saved_registry =
-                        orchestrator.registry.clone();
-                    orchestrator
-                        .notification_manager
-                        .info(format!("Deleting \"{}\"\u{2026}", target.name));
-                    let rx = spawn_delete_folder_worker(target.dest);
-                    orchestrator
-                        .pending_folder_deletes
-                        .push(PendingFolderDelete {
-                            modlist_name: target.name,
-                            rx,
-                        });
-                }
-                Ok(None) => {
-                    orchestrator.persistence_cycle.last_saved_registry =
-                        orchestrator.registry.clone();
-                    orchestrator
-                        .notification_manager
-                        .success(format!("Deleted \"{name}\""));
-                }
-                Err(err) => {
-                    orchestrator
-                        .notification_manager
-                        .error(format!("Couldn't delete \"{name}\": {err}"));
-                }
-            }
+            delete_modlist::delete_confirmed_modlist(orchestrator, &entry);
         }
         ConfirmOutcome::Cancelled => {
             orchestrator.home_screen_state.delete_target = None;
@@ -533,7 +501,7 @@ fn render_card_list(
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 10.0;
         for entry in visible {
-            match modlist_card::render(ui, palette, entry) {
+            match modlist_card::render(ui, palette, entry, CardMenu::Full) {
                 ModlistCardActions::Resume => {
                     nav = Some(NavRequest::Workspace {
                         modlist_id: entry.id.clone(),

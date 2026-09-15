@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use tracing::warn;
 
 use crate::app::modlist_share::ModlistSharePreview;
+use crate::install_runtime::replaced_owners::{self, HeldOwners};
 use crate::registry::destination_claim::{
     ClaimContext, ClaimRefusal, DestinationClaim, resolve_destination_claim,
 };
 use crate::registry::errors::RegistryError;
 use crate::registry::model::Game;
-use crate::registry::operations::remove_entry_keep_folder;
 use crate::registry::operations_create::{ForkedModlistInput, create_forked_modlist};
 use crate::registry::store_workspace::WorkspaceStore;
 use crate::registry::workspace_model::ModlistWorkspaceState;
@@ -77,22 +77,14 @@ pub(crate) fn mint_and_arm(
             installing_id: orchestrator.active_install_modlist_id.as_deref(),
         },
     );
+    let mut held: Option<HeldOwners> = None;
     match claim {
         DestinationClaim::Free | DestinationClaim::Adopt(_) => {}
         DestinationClaim::Replace(ids) => {
-            for id in &ids {
-                if let Err(err) = remove_entry_keep_folder(
-                    id,
-                    &orchestrator.registry_store,
-                    &mut orchestrator.registry,
-                ) {
-                    warn!(
-                        target = "orchestrator",
-                        "Create fork: take-over remove_entry_keep_folder({id}) failed: {err}"
-                    );
-                }
-            }
-            orchestrator.persistence_cycle.last_saved_registry = orchestrator.registry.clone();
+            held = Some(
+                replaced_owners::hold_owners(orchestrator, &ids)
+                    .map_err(ForkMintError::Registry)?,
+            );
         }
         DestinationClaim::Refused(ClaimRefusal::OwnerIsInstalling(_)) => {
             return Err(ForkMintError::MidInstall);
@@ -110,7 +102,7 @@ pub(crate) fn mint_and_arm(
         u32::try_from(preview.bgee_entries + preview.bg2ee_entries).unwrap_or(u32::MAX);
     let parent_mod_count = count_unique_mods(&[&preview.bgee_log_text, &preview.bg2ee_log_text]);
 
-    let entry = create_forked_modlist(
+    let entry = match create_forked_modlist(
         ForkedModlistInput {
             name: &fork_name,
             game,
@@ -124,12 +116,22 @@ pub(crate) fn mint_and_arm(
             parent_description: preview.description.as_deref(),
         },
         &mut orchestrator.registry,
-    )
-    .map_err(ForkMintError::Registry)?;
+    ) {
+        Ok(entry) => entry,
+        Err(err) => {
+            if let Some(h) = held.take() {
+                replaced_owners::restore_owners(orchestrator, h);
+            }
+            return Err(ForkMintError::Registry(err));
+        }
+    };
 
     let modlist_id = entry.id.clone();
 
     persist_forked_workspace(orchestrator, &entry.id);
+    if let Some(h) = held.take() {
+        replaced_owners::finalize_owners(h, &entry.id);
+    }
 
     {
         let st = &mut orchestrator.install_screen_state;
@@ -269,7 +271,27 @@ pub fn fork_workspace_relpath(modlist_id: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::app::modlist_share::ForkAncestor;
-    use crate::registry::model::ModlistRegistry;
+    use crate::registry::model::{ModlistEntry, ModlistRegistry, ModlistState};
+
+    struct TempDestGuard(std::path::PathBuf);
+
+    impl TempDestGuard {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("bio_fork_arm_test_{tag}_{}", std::process::id()));
+            Self(path)
+        }
+
+        fn as_string(&self) -> String {
+            self.0.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for TempDestGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     fn preview(name: Option<&str>, author: Option<&str>, game: &str) -> ModlistSharePreview {
         ModlistSharePreview {
@@ -437,5 +459,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fork_take_over_holds_the_old_owner_and_removes_its_data_dir() {
+        let dest = TempDestGuard::new("fork-take-over");
+        let mut app = OrchestratorApp::new_isolated_for_test("fork-take-over");
+        app.registry.entries.push(ModlistEntry {
+            id: "OLD000000001".to_string(),
+            name: "Old fork".to_string(),
+            game: Game::EET,
+            destination_folder: dest.as_string(),
+            state: ModlistState::InProgress,
+            ..Default::default()
+        });
+        let old_data_dir = crate::registry::store_workspace::modlist_data_dir("OLD000000001");
+        std::fs::create_dir_all(&old_data_dir).expect("seed the old data dir");
+
+        let p = preview(Some("Parent"), Some("@p"), "EET");
+        let dest_string = dest.as_string();
+        let req = request(&p, "New fork", &dest_string, "code");
+
+        let report = mint_and_arm(&mut app, &req).expect("mint ok");
+
+        assert!(app.registry.find("OLD000000001").is_none());
+        assert!(!old_data_dir.exists());
+        assert!(app.registry.find(&report.modlist_id).is_some());
+        assert!(app.pending_replaced_entry.is_none());
     }
 }
