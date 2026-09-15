@@ -438,6 +438,7 @@ fn sync_share_provenance_from_entry(orchestrator: &mut OrchestratorApp, entry: &
     orchestrator.wizard_state.set_modlist_share_provenance(
         Some(entry.name.clone()),
         entry.author.clone(),
+        entry.description.clone(),
         entry.forked_from.clone(),
     );
 }

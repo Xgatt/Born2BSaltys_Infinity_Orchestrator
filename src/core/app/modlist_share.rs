@@ -121,6 +121,14 @@ fn insert_export_provenance(payload: &mut serde_json::Value, state: &WizardState
     {
         obj.insert("author".to_string(), json!(author));
     }
+    if let Some(description) = state
+        .modlist_share_description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        obj.insert("description".to_string(), json!(description));
+    }
     if !state.modlist_share_forked_from.is_empty() {
         obj.insert(
             "forked_from".to_string(),
@@ -147,6 +155,7 @@ pub(crate) struct ModlistSharePreview {
     pub(crate) allow_auto_install: bool,
     pub(crate) name: Option<String>,
     pub(crate) author: Option<String>,
+    pub(crate) description: Option<String>,
     pub(crate) forked_from: Vec<ForkAncestor>,
 }
 
@@ -201,28 +210,30 @@ pub(crate) fn import_modlist_share_code(
 }
 
 #[derive(Deserialize)]
-struct ModlistSharePayload {
-    format_version: u64,
+pub(crate) struct ModlistSharePayload {
+    pub(crate) format_version: u64,
     #[serde(default)]
-    bio_version: String,
-    game_install: String,
-    install_mode: String,
+    pub(crate) bio_version: String,
+    pub(crate) game_install: String,
+    pub(crate) install_mode: String,
     #[serde(default)]
-    weidu_logs: ModlistShareWeiduLogs,
+    pub(crate) weidu_logs: ModlistShareWeiduLogs,
     #[serde(default)]
-    source_overrides: ModlistShareSourceOverrides,
+    pub(crate) source_overrides: ModlistShareSourceOverrides,
     #[serde(default)]
-    installed_refs: ModlistShareInstalledRefs,
+    pub(crate) installed_refs: ModlistShareInstalledRefs,
     #[serde(default)]
-    mod_configs: ModlistShareModConfigs,
+    pub(crate) mod_configs: ModlistShareModConfigs,
     #[serde(default = "default_true")]
-    allow_auto_install: bool,
+    pub(crate) allow_auto_install: bool,
     #[serde(default)]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default)]
-    author: Option<String>,
+    pub(crate) author: Option<String>,
     #[serde(default)]
-    forked_from: Vec<ForkAncestor>,
+    pub(crate) description: Option<String>,
+    #[serde(default)]
+    pub(crate) forked_from: Vec<ForkAncestor>,
 }
 
 const fn default_true() -> bool {
@@ -236,25 +247,25 @@ pub(crate) struct ForkAncestor {
 }
 
 #[derive(Default, Deserialize)]
-struct ModlistShareWeiduLogs {
-    bgee: Option<String>,
-    bg2ee: Option<String>,
+pub(crate) struct ModlistShareWeiduLogs {
+    pub(crate) bgee: Option<String>,
+    pub(crate) bg2ee: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
-struct ModlistShareSourceOverrides {
-    mod_downloads_user_toml: Option<String>,
+pub(crate) struct ModlistShareSourceOverrides {
+    pub(crate) mod_downloads_user_toml: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
-struct ModlistShareInstalledRefs {
-    mod_installed_refs_toml: Option<String>,
+pub(crate) struct ModlistShareInstalledRefs {
+    pub(crate) mod_installed_refs_toml: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
-struct ModlistShareModConfigs {
+pub(crate) struct ModlistShareModConfigs {
     #[serde(default)]
-    files: Vec<ModlistShareConfigFile>,
+    pub(crate) files: Vec<ModlistShareConfigFile>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -265,7 +276,7 @@ pub(crate) struct ModlistShareConfigFile {
     pub(crate) base64_data: String,
 }
 
-fn decode_share_payload(code: &str) -> Result<ModlistSharePayload, String> {
+pub(crate) fn decode_share_payload(code: &str) -> Result<ModlistSharePayload, String> {
     let trimmed = code.trim();
     let encoded = trimmed
         .strip_prefix(SHARE_CODE_PREFIX)
@@ -342,6 +353,7 @@ fn share_preview(payload: &ModlistSharePayload) -> Result<ModlistSharePreview, S
         allow_auto_install: payload.allow_auto_install,
         name: payload.name.clone(),
         author: payload.author.clone(),
+        description: payload.description.clone(),
         forked_from: payload.forked_from.clone(),
     })
 }
@@ -927,7 +939,7 @@ fn base64url_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn base64url_decode(text: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn base64url_decode(text: &str) -> Result<Vec<u8>, String> {
     let mut values = Vec::new();
     for ch in text.chars().filter(|ch| !ch.is_whitespace()) {
         match ch {
@@ -1010,6 +1022,10 @@ mod tests {
         );
         assert_eq!(payload.name, None, "absent name must default None");
         assert_eq!(payload.author, None, "absent author must default None");
+        assert_eq!(
+            payload.description, None,
+            "absent description must default None"
+        );
         assert!(
             payload.forked_from.is_empty(),
             "absent forked_from must default empty"
@@ -1089,6 +1105,7 @@ mod tests {
         state.set_modlist_share_provenance(
             Some("  Tactical EET 2026  ".to_string()),
             Some("  @b2bs  ".to_string()),
+            None,
             vec![ForkAncestor {
                 name: "Root build".to_string(),
                 author: "@root".to_string(),
@@ -1107,6 +1124,38 @@ mod tests {
                 author: "@root".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn export_bakes_the_description_when_set() {
+        let mut state = state_with_one_bgee_component();
+        state.set_modlist_share_provenance(
+            None,
+            None,
+            Some("  BG2EE with the fixpack  ".to_string()),
+            Vec::new(),
+        );
+
+        let code =
+            export_modlist_share_code_with(&state, &ShareExportSources::default()).expect("export");
+        let preview = preview_modlist_share_code(&code).expect("preview");
+
+        assert_eq!(
+            preview.description.as_deref(),
+            Some("BG2EE with the fixpack")
+        );
+    }
+
+    #[test]
+    fn blank_description_is_omitted() {
+        let mut state = state_with_one_bgee_component();
+        state.set_modlist_share_provenance(None, None, Some("   ".to_string()), Vec::new());
+
+        let code =
+            export_modlist_share_code_with(&state, &ShareExportSources::default()).expect("export");
+        let preview = preview_modlist_share_code(&code).expect("preview");
+
+        assert_eq!(preview.description, None);
     }
 
     #[test]

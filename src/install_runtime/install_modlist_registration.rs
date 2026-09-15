@@ -45,6 +45,13 @@ pub(crate) fn register_install_modlist_paste(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
+    let description = preview
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let id = new_modlist_id();
     let now = Utc::now();
 
@@ -57,6 +64,7 @@ pub(crate) fn register_install_modlist_paste(
         creation_date: now,
         last_touched_date: now,
         author,
+        description,
         forked_from: preview.forked_from.clone(),
         workspace_file_relpath: PathBuf::from("modlists").join(&id).join("workspace.json"),
         ..Default::default()
@@ -290,6 +298,16 @@ mod tests {
         author: Option<&str>,
         forked_from: Vec<ForkAncestor>,
     ) -> ModlistSharePreview {
+        preview_with_description(name, game, author, None, forked_from)
+    }
+
+    fn preview_with_description(
+        name: Option<&str>,
+        game: &str,
+        author: Option<&str>,
+        description: Option<&str>,
+        forked_from: Vec<ForkAncestor>,
+    ) -> ModlistSharePreview {
         ModlistSharePreview {
             bio_version: "x".to_string(),
             game_install: game.to_string(),
@@ -307,6 +325,7 @@ mod tests {
             allow_auto_install: true,
             name: name.map(str::to_string),
             author: author.map(str::to_string),
+            description: description.map(str::to_string),
             forked_from,
         }
     }
@@ -415,6 +434,27 @@ mod tests {
             "ids must be unique (the create_modlist ids convention)"
         );
         assert_eq!(reg.entries.len(), 2);
+    }
+
+    #[test]
+    fn paste_registration_carries_the_description() {
+        let mut reg = ModlistRegistry::default();
+        let p = preview_with_description(
+            Some("Tactical EET 2026"),
+            "EET",
+            Some("@b2bs"),
+            Some("A tactical build with fixpack"),
+            vec![],
+        );
+        let e = register_install_modlist_paste(&p, "/x", &mut reg).expect("register ok");
+        assert_eq!(
+            e.description.as_deref(),
+            Some("A tactical build with fixpack")
+        );
+
+        let blank = preview_with_description(Some("X"), "EET", None, Some("   "), vec![]);
+        let e2 = register_install_modlist_paste(&blank, "/y", &mut reg).expect("register ok");
+        assert_eq!(e2.description, None, "blank description ⇒ None");
     }
 
     #[test]

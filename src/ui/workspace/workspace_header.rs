@@ -238,7 +238,7 @@ fn render_save_or_share_button(
         let resp = redesign_btn(
             ui,
             palette,
-            "Share import code",
+            "Share this modlist",
             BtnOpts {
                 small: true,
                 primary: installed,
@@ -247,7 +247,7 @@ fn render_save_or_share_button(
             },
         )
         .on_hover_text(if installed {
-            "View and copy the import code for this modlist"
+            "Export a modlist file or copy the share code"
         } else {
             "Available after a successful install"
         });

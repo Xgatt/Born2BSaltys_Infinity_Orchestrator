@@ -15,6 +15,7 @@ pub mod pill;
 pub mod r_box;
 pub mod screen_title;
 pub mod section_header;
+pub mod share_actions;
 pub mod tab_strip;
 pub mod window_title;
 

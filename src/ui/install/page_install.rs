@@ -26,7 +26,7 @@ use crate::ui::orchestrator::widgets::NotificationManager;
 use crate::ui::shared::redesign_tokens::ThemePalette;
 
 #[derive(Debug, PartialEq, Eq)]
-enum InstallRequest {
+pub(crate) enum InstallRequest {
     Stage(InstallStage),
     Nav(NavDestination),
 }
@@ -75,6 +75,7 @@ fn gallery_stage(
 ) -> Option<InstallRequest> {
     match stage_gallery::render(ui, palette, state) {
         GalleryOutcome::OpenPaste => Some(open_paste_from_gallery(state)),
+        GalleryOutcome::OpenFile => open_file_from_gallery(state, step1, notification_manager),
         GalleryOutcome::OpenDetails(index) => {
             state.gallery.selected = Some(index);
             let entry = selected_entry(state)?;
@@ -82,6 +83,52 @@ fn gallery_stage(
         }
         GalleryOutcome::Stay => None,
     }
+}
+
+fn open_file_from_gallery(
+    state: &mut InstallScreenState,
+    step1: &crate::app::state::Step1State,
+    notification_manager: &mut NotificationManager,
+) -> Option<InstallRequest> {
+    let path = rfd::FileDialog::new()
+        .add_filter(
+            crate::app::modlist_biolist::BIOLIST_FILTER_LABEL,
+            &[crate::app::modlist_biolist::BIOLIST_EXTENSION],
+        )
+        .pick_file()?;
+    match crate::app::modlist_biolist::read_share_code(&path) {
+        Ok(code) => open_details_from_code(state, step1, code, notification_manager),
+        Err(msg) => {
+            notification_manager.error(msg);
+            None
+        }
+    }
+}
+
+pub(crate) fn open_details_from_code(
+    state: &mut InstallScreenState,
+    step1: &crate::app::state::Step1State,
+    code: String,
+    notification_manager: &mut NotificationManager,
+) -> Option<InstallRequest> {
+    state.clear_preview();
+    state.import_code = code;
+    run_preview_parse(state, step1);
+    if let Some(msg) = state.preview_parse_error.clone() {
+        notification_manager.error(format!("Couldn't read that modlist file: {msg}"));
+        state.import_code.clear();
+        return None;
+    }
+    state.review.origin = ReviewOrigin::File;
+    state.review.name = state
+        .parsed_preview
+        .as_ref()
+        .map_or_else(String::new, |preview| {
+            stage_review::display_name("", preview)
+        });
+    state.review.modify = false;
+    state.gallery.selected = None;
+    Some(InstallRequest::Stage(InstallStage::Details))
 }
 
 fn details_stage(
@@ -177,7 +224,7 @@ fn details_back(
     pending_reinstall_id: &mut Option<String>,
 ) -> InstallRequest {
     match state.review.origin {
-        ReviewOrigin::Details => {
+        ReviewOrigin::Details | ReviewOrigin::File => {
             state.clear_preview();
             state.import_code.clear();
             state.gallery.selected = None;
@@ -535,6 +582,7 @@ mod tests {
             allow_auto_install: true,
             name: None,
             author: None,
+            description: None,
             forked_from: Vec::new(),
         });
 
@@ -781,6 +829,79 @@ mod tests {
         assert!(state.drawer.open.is_none());
     }
 
+    fn minted_file_code() -> String {
+        use crate::app::modlist_share::encode_share_payload_text;
+
+        let payload_text = r#"{
+            "format_version": 1,
+            "game_install": "BGEE",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "bgee": "~MOD/MOD.TP2~ #0 #0 // A component" },
+            "description": "A minted file for tests"
+        }"#;
+        encode_share_payload_text(payload_text).expect("encode a minimal payload")
+    }
+
+    #[test]
+    fn a_file_code_opens_details_with_the_file_origin() {
+        let code = minted_file_code();
+        let mut state = InstallScreenState::default();
+        let step1 = crate::app::state::Step1State::default();
+        let mut notification_manager = NotificationManager::new();
+
+        let request =
+            open_details_from_code(&mut state, &step1, code.clone(), &mut notification_manager);
+
+        assert_eq!(request, Some(InstallRequest::Stage(InstallStage::Details)));
+        assert_eq!(state.review.origin, ReviewOrigin::File);
+        assert!(!state.review.modify);
+        assert!(state.gallery.selected.is_none());
+        assert_eq!(state.import_code, code);
+        assert!(state.parsed_preview.is_some());
+    }
+
+    #[test]
+    fn an_unreadable_file_code_stays_on_the_gallery_with_an_error() {
+        let mut state = InstallScreenState::default();
+        let step1 = crate::app::state::Step1State::default();
+        let mut notification_manager = NotificationManager::new();
+
+        let request = open_details_from_code(
+            &mut state,
+            &step1,
+            "not a valid share code".to_string(),
+            &mut notification_manager,
+        );
+
+        assert_eq!(request, None);
+        assert!(state.import_code.is_empty());
+        assert!(state.parsed_preview.is_none());
+        let history = notification_manager.history();
+        assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn details_back_from_a_file_returns_to_the_gallery_and_clears_the_preview() {
+        let code = minted_file_code();
+        let preview = preview_modlist_share_code(&code).expect("minted code parses");
+
+        let mut state = InstallScreenState {
+            import_code: code,
+            parsed_preview: Some(preview),
+            ..Default::default()
+        };
+        state.review.origin = ReviewOrigin::File;
+        state.gallery.selected = Some(0);
+        let mut pending_reinstall_id = None;
+
+        let request = details_back(&mut state, &mut pending_reinstall_id);
+
+        assert_eq!(request, InstallRequest::Stage(InstallStage::Gallery));
+        assert!(state.parsed_preview.is_none());
+        assert!(state.import_code.is_empty());
+        assert!(state.gallery.selected.is_none());
+    }
+
     #[test]
     fn details_back_from_a_reinstall_clears_the_pending_id_and_returns_to_the_gallery() {
         let entry = catalog::entries()
@@ -895,6 +1016,7 @@ mod tests {
             allow_auto_install: true,
             name: None,
             author: None,
+            description: None,
             forked_from: Vec::new(),
         });
         app.install_screen_state.review.name = "Tactical EET".to_string();

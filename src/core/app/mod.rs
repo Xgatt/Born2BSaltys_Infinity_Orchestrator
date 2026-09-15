@@ -94,6 +94,7 @@ pub mod controller;
 pub mod mod_downloads;
 #[path = "step2/update/mod_update_locks.rs"]
 pub mod mod_update_locks;
+pub mod modlist_biolist;
 pub mod modlist_config_files;
 pub mod modlist_share;
 #[path = "step2/update/platform_asset_target.rs"]

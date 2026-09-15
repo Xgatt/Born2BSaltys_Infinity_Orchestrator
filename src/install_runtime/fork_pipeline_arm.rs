@@ -110,6 +110,7 @@ pub(crate) fn mint_and_arm(
             parent_forked_from: &preview.forked_from,
             parent_mod_count,
             parent_component_count,
+            parent_description: preview.description.as_deref(),
         },
         &mut orchestrator.registry,
     )
@@ -117,33 +118,7 @@ pub(crate) fn mint_and_arm(
 
     let modlist_id = entry.id.clone();
 
-    let canonical_store = WorkspaceStore::new_for_id(&entry.id);
-    let workspace_state = ModlistWorkspaceState {
-        pending_destination_prep: None,
-        ..Default::default()
-    };
-    if let Err(err) = canonical_store.save(&workspace_state) {
-        warn!(
-            target = "orchestrator",
-            "Create fork: writing canonical workspace.json for {} failed: {err}", entry.id
-        );
-    }
-    orchestrator
-        .workspace_state
-        .insert(entry.id.clone(), workspace_state);
-    orchestrator
-        .workspace_stores
-        .insert(entry.id.clone(), canonical_store);
-
-    if let Err(err) = orchestrator.registry_store.save(&orchestrator.registry) {
-        warn!(
-            target = "orchestrator",
-            "Create fork: atomic registry persist for {} failed: {err}", entry.id
-        );
-    }
-    orchestrator
-        .persistence_cycle
-        .mark_registry_dirty(std::time::Instant::now());
+    persist_forked_workspace(orchestrator, &entry.id);
 
     {
         let st = &mut orchestrator.install_screen_state;
@@ -166,6 +141,36 @@ pub(crate) fn mint_and_arm(
     crate::install_runtime::active_modlist_source_path::set_ambient_for_modlist(&modlist_id);
 
     Ok(ForkMintReport { modlist_id })
+}
+
+fn persist_forked_workspace(orchestrator: &mut OrchestratorApp, modlist_id: &str) {
+    let canonical_store = WorkspaceStore::new_for_id(modlist_id);
+    let workspace_state = ModlistWorkspaceState {
+        pending_destination_prep: None,
+        ..Default::default()
+    };
+    if let Err(err) = canonical_store.save(&workspace_state) {
+        warn!(
+            target = "orchestrator",
+            "Create fork: writing canonical workspace.json for {modlist_id} failed: {err}"
+        );
+    }
+    orchestrator
+        .workspace_state
+        .insert(modlist_id.to_string(), workspace_state);
+    orchestrator
+        .workspace_stores
+        .insert(modlist_id.to_string(), canonical_store);
+
+    if let Err(err) = orchestrator.registry_store.save(&orchestrator.registry) {
+        warn!(
+            target = "orchestrator",
+            "Create fork: atomic registry persist for {modlist_id} failed: {err}"
+        );
+    }
+    orchestrator
+        .persistence_cycle
+        .mark_registry_dirty(std::time::Instant::now());
 }
 
 pub(crate) struct ForkInputs {
@@ -271,6 +276,7 @@ mod tests {
             allow_auto_install: true,
             name: name.map(str::to_string),
             author: author.map(str::to_string),
+            description: None,
             forked_from: Vec::new(),
         }
     }
@@ -367,6 +373,7 @@ mod tests {
             parent_forked_from: &existing_chain,
             parent_mod_count: 0,
             parent_component_count: 0,
+            parent_description: None,
         };
         let entry = create_forked_modlist(input, &mut reg).expect("ok");
         assert_eq!(entry.forked_from.len(), 2);

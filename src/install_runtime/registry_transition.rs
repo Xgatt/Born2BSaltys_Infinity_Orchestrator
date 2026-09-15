@@ -632,6 +632,7 @@ mod tests {
             allow_auto_install: false,
             name: Some("Tactical EET 2026".to_string()),
             author: Some("@sharer".to_string()),
+            description: None,
             forked_from: vec![crate::app::modlist_share::ForkAncestor {
                 name: "Root".to_string(),
                 author: "@root".to_string(),
