@@ -76,7 +76,19 @@ impl ShareMeta {
 
 pub fn pack_meta(wizard_state: &WizardState, meta: &ShareMeta) -> Result<String, String> {
     let base = crate::app::modlist_share::export_modlist_share_code(wizard_state)?;
+    pack_meta_onto_base(&base, meta)
+}
 
+pub fn pack_meta_for_completed_install(
+    wizard_state: &WizardState,
+    meta: &ShareMeta,
+) -> Result<String, String> {
+    let base =
+        crate::app::modlist_share::export_modlist_share_code_for_completed_install(wizard_state)?;
+    pack_meta_onto_base(&base, meta)
+}
+
+fn pack_meta_onto_base(base: &str, meta: &ShareMeta) -> Result<String, String> {
     let encoded = base
         .trim()
         .strip_prefix(SHARE_CODE_PREFIX)

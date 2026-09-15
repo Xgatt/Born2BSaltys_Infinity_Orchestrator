@@ -14,6 +14,7 @@ use super::super::compat_step3_rules::{Step3CompatMarker, marker_key};
 use super::{
     SourceNotice, SourceNoticeSeverity, SourceRemedy, apply_step2, apply_step3,
     invalidate_source_check, preview_issue, refresh_source_check, residue_issue,
+    unresolved_sources_issue, unresolved_suffix,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -377,6 +378,7 @@ fn preview(
         author: None,
         description: None,
         forked_from: Vec::new(),
+        unresolved_mods: Vec::new(),
     }
 }
 
@@ -808,6 +810,53 @@ fn role_swap_reprobes_the_folder() {
     assert_eq!(
         state.dlc_source_check.probes[&second_text].game,
         SourceGame::Bgee
+    );
+}
+
+#[test]
+fn unresolved_suffix_is_empty_for_no_names() {
+    assert_eq!(unresolved_suffix(&[]), String::new());
+}
+
+#[test]
+fn unresolved_suffix_is_singular_for_one_name() {
+    assert_eq!(
+        unresolved_suffix(&["Alpha".to_string()]),
+        " 1 mod has no download source: Alpha."
+    );
+}
+
+#[test]
+fn unresolved_suffix_is_plural_for_several_names() {
+    assert_eq!(
+        unresolved_suffix(&["Alpha".to_string(), "Beta".to_string()]),
+        " 2 mods have no download source: Alpha, Beta."
+    );
+}
+
+#[test]
+fn unresolved_sources_issue_is_none_for_an_empty_list() {
+    assert_eq!(unresolved_sources_issue(&[]), None);
+}
+
+#[test]
+fn unresolved_sources_issue_is_singular_for_one_name() {
+    let notice = unresolved_sources_issue(&["Alpha".to_string()]).expect("notice");
+    assert_eq!(notice.severity, SourceNoticeSeverity::Warning);
+    assert_eq!(notice.remedy, SourceRemedy::None);
+    assert_eq!(
+        notice.text,
+        "1 mod has no download source: Alpha. BIO will not be able to download it."
+    );
+}
+
+#[test]
+fn unresolved_sources_issue_is_plural_for_several_names() {
+    let notice =
+        unresolved_sources_issue(&["Alpha".to_string(), "Beta".to_string()]).expect("notice");
+    assert_eq!(
+        notice.text,
+        "2 mods have no download source: Alpha, Beta. BIO will not be able to download them."
     );
 }
 

@@ -169,6 +169,9 @@ fn details_stage(
     header
         .source_residue_issue
         .clone_from(&orchestrator.install_screen_state.source_residue_issue);
+    header
+        .unresolved_sources_issue
+        .clone_from(&orchestrator.install_screen_state.unresolved_sources_issue);
     let mut fork_info_open = orchestrator.install_screen_state.fork_info_open;
 
     let outcome = stage_details::render(
@@ -506,6 +509,9 @@ pub(crate) fn refresh_source_compat_issue(
     state.source_residue_issue = state.parsed_preview.as_ref().and_then(|preview| {
         crate::app::compat_dlc_source::residue_issue(step1, &preview.game_install)
     });
+    state.unresolved_sources_issue = state.parsed_preview.as_ref().and_then(|preview| {
+        crate::app::compat_dlc_source::unresolved_sources_issue(&preview.unresolved_mods)
+    });
 }
 
 #[cfg(test)]
@@ -584,6 +590,7 @@ mod tests {
             author: None,
             description: None,
             forked_from: Vec::new(),
+            unresolved_mods: Vec::new(),
         });
 
         refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
@@ -609,6 +616,51 @@ mod tests {
         assert!(app.install_screen_state.source_compat_issue.is_none());
 
         std::fs::remove_dir_all(&source).expect("clean up source fixture");
+    }
+
+    #[test]
+    fn refresh_source_compat_issue_fills_the_unresolved_sources_slot_from_the_preview() {
+        use crate::app::modlist_share::ModlistSharePreview;
+
+        let mut app = orch_for_install_test();
+        app.install_screen_state.parsed_preview = Some(ModlistSharePreview {
+            bio_version: String::new(),
+            game_install: "BGEE".to_string(),
+            install_mode: "custom".to_string(),
+            bgee_entries: 0,
+            bg2ee_entries: 0,
+            has_source_overrides: false,
+            has_installed_refs: false,
+            bgee_log_text: String::new(),
+            bg2ee_log_text: String::new(),
+            source_overrides_text: String::new(),
+            installed_refs_text: String::new(),
+            mod_config_count: 0,
+            mod_configs_text: String::new(),
+            allow_auto_install: true,
+            name: None,
+            author: None,
+            description: None,
+            forked_from: Vec::new(),
+            unresolved_mods: vec!["Alpha".to_string(), "Beta".to_string()],
+        });
+
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        let notice = app
+            .install_screen_state
+            .unresolved_sources_issue
+            .as_ref()
+            .expect("unresolved sources notice");
+        assert_eq!(
+            notice.text,
+            "2 mods have no download source: Alpha, Beta. BIO will not be able to download them."
+        );
+
+        if let Some(preview) = app.install_screen_state.parsed_preview.as_mut() {
+            preview.unresolved_mods.clear();
+        }
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert!(app.install_screen_state.unresolved_sources_issue.is_none());
     }
 
     #[test]
@@ -1018,6 +1070,7 @@ mod tests {
             author: None,
             description: None,
             forked_from: Vec::new(),
+            unresolved_mods: Vec::new(),
         });
         app.install_screen_state.review.name = "Tactical EET".to_string();
         app.install_screen_state.destination = destination.to_string_lossy().into_owned();

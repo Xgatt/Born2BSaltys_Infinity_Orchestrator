@@ -127,9 +127,11 @@ fn apply_share_dialog(
     match outcome {
         ShareOutcome::ExportFile => {
             if let Some(code) = code {
+                let unresolved = share_actions::unresolved_mods_for_code(code);
                 share_actions::export_modlist_file(
                     &entry.name,
                     code,
+                    &unresolved,
                     &mut orchestrator.notification_manager,
                 );
             }
@@ -137,7 +139,8 @@ fn apply_share_dialog(
         }
         ShareOutcome::CopyCode => {
             if let Some(code) = code {
-                share_actions::copy_share_code(ctx, &entry.name, code);
+                let unresolved = share_actions::unresolved_mods_for_code(code);
+                share_actions::copy_share_code(ctx, &entry.name, code, &unresolved);
             }
             orchestrator.workspace_step5.share_dialog_open = false;
         }

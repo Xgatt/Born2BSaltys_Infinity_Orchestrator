@@ -399,6 +399,23 @@ pub(crate) fn load_mod_download_sources() -> ModDownloadsLoad {
     result
 }
 
+pub(crate) fn load_mod_download_sources_from_texts(
+    default_text: &str,
+    user_text: &str,
+    modlist_text: &str,
+) -> ModDownloadsLoad {
+    let default_load = load_source_overlays_from_str(default_text, "default");
+    let user_load = load_source_overlays_from_str(user_text, "user");
+    let mut result = two_tier_from_overlays(default_load, user_load);
+
+    if !modlist_text.trim().is_empty() {
+        let per_load = load_source_overlays_from_str(modlist_text, "modlist");
+        apply_modlist_overlay(&mut result, per_load);
+    }
+
+    result
+}
+
 fn apply_modlist_overlay(result: &mut ModDownloadsLoad, per_load: ModDownloadsOverlayLoad) {
     let mut by_source: BTreeMap<String, ModDownloadSource> = result
         .sources

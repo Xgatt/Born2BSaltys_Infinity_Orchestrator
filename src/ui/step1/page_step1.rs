@@ -387,6 +387,7 @@ mod tests {
                 name: "Root".to_string(),
                 author: "@root".to_string(),
             }],
+            unresolved_mods: Vec::new(),
         };
 
         let text = format_modlist_import_preview(&preview);

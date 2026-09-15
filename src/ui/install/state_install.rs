@@ -275,6 +275,7 @@ impl InstallPipelineFlags {
 pub struct InstallScreenState {
     pub(crate) source_compat_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
     pub(crate) source_residue_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
+    pub(crate) unresolved_sources_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
     pub stage: InstallStage,
     pub pipeline_kind: PipelineKind,
     pub(crate) gallery: GalleryScreenState,
@@ -353,6 +354,7 @@ impl InstallScreenState {
     pub fn clear_preview(&mut self) {
         self.source_compat_issue = None;
         self.source_residue_issue = None;
+        self.unresolved_sources_issue = None;
         self.parsed_preview = None;
         self.preview_parse_error = None;
         self.inside = None;
@@ -614,6 +616,7 @@ mod tests {
             author: None,
             description: None,
             forked_from: Vec::new(),
+            unresolved_mods: Vec::new(),
         };
         let mut st = InstallScreenState {
             parsed_preview: Some(preview),

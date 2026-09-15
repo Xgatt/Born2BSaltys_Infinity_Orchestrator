@@ -53,6 +53,8 @@ pub(crate) struct FactRow {
 pub(crate) struct DetailsHeader {
     pub(crate) source_compat_issue: Option<SourceNotice>,
     pub(crate) source_residue_issue: Option<SourceNotice>,
+    pub(crate) unresolved_sources_issue: Option<SourceNotice>,
+    pub(crate) unresolved_mod_count: usize,
     pub(crate) name: String,
     pub(crate) author: Option<String>,
     pub(crate) version: Option<String>,
@@ -85,6 +87,8 @@ impl DetailsHeader {
             back_label: "All modlists",
             source_compat_issue: None,
             source_residue_issue: None,
+            unresolved_sources_issue: None,
+            unresolved_mod_count: preview.unresolved_mods.len(),
         }
     }
 
@@ -134,6 +138,8 @@ impl DetailsHeader {
             built_with: non_empty(&preview.bio_version),
             source_compat_issue: None,
             source_residue_issue: None,
+            unresolved_sources_issue: None,
+            unresolved_mod_count: preview.unresolved_mods.len(),
             lineage: preview.forked_from.clone(),
             back_label: if matches!(origin, ReviewOrigin::Paste) {
                 "Back"
@@ -392,6 +398,18 @@ fn body_columns(
                     );
                     ui.add_space(16.0);
                 }
+                if let Some(notice) = &header.unresolved_sources_issue {
+                    stage_review::render_source_notice(
+                        ui,
+                        palette,
+                        notice,
+                        stage_review::source_warning_action(
+                            availability == ModifyAvailability::OnlyInstall,
+                            availability == ModifyAvailability::OnlyModify,
+                        ),
+                    );
+                    ui.add_space(16.0);
+                }
                 prose_section(
                     ui,
                     palette,
@@ -483,7 +501,22 @@ pub(crate) fn fact_rows(header: &DetailsHeader) -> Vec<FactRow> {
                 .clone()
                 .unwrap_or_else(|| DASH.to_string()),
         },
+        FactRow {
+            label: "Sources".to_string(),
+            value: sources_fact_value(header.unresolved_mod_count),
+        },
     ]
+}
+
+#[must_use]
+fn sources_fact_value(unresolved: usize) -> String {
+    if unresolved == 0 {
+        "all resolved".to_string()
+    } else if unresolved == 1 {
+        "1 without a source".to_string()
+    } else {
+        format!("{unresolved} without a source")
+    }
 }
 
 fn facts_column(ui: &mut egui::Ui, palette: ThemePalette, header: &DetailsHeader) {
@@ -543,6 +576,7 @@ mod tests {
             author: None,
             description: None,
             forked_from: Vec::new(),
+            unresolved_mods: Vec::new(),
         }
     }
 
@@ -671,7 +705,14 @@ mod tests {
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(
             labels,
-            vec!["Author", "Version", "Game", "Requires", "Built with BIO"]
+            vec![
+                "Author",
+                "Version",
+                "Game",
+                "Requires",
+                "Built with BIO",
+                "Sources"
+            ]
         );
 
         assert_eq!(rows[0].value, entry.author);
@@ -679,6 +720,14 @@ mod tests {
         assert_eq!(rows[2].value, entry.game.to_legacy_string());
         assert_eq!(rows[3].value, entry.requirements);
         assert_eq!(rows[4].value, "0.1.0-test");
+        assert_eq!(rows[5].value, "all resolved");
+    }
+
+    #[test]
+    fn sources_fact_value_reports_a_partial_count_or_all_resolved() {
+        assert_eq!(sources_fact_value(0), "all resolved");
+        assert_eq!(sources_fact_value(1), "1 without a source");
+        assert_eq!(sources_fact_value(2), "2 without a source");
     }
 
     #[test]

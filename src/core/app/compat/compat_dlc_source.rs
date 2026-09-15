@@ -122,6 +122,7 @@ pub(crate) enum SourceRemedy {
     OrderMerger,
     ChangeSource,
     CleanSource,
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,6 +233,38 @@ pub(crate) fn residue_issue(step1: &Step1State, game_install: &str) -> Option<So
         severity: SourceNoticeSeverity::Warning,
         text: sentences.join(" "),
         remedy: SourceRemedy::CleanSource,
+    })
+}
+
+#[must_use]
+pub(crate) fn unresolved_suffix(unresolved: &[String]) -> String {
+    if unresolved.is_empty() {
+        return String::new();
+    }
+    let names = unresolved.join(", ");
+    if unresolved.len() == 1 {
+        format!(" 1 mod has no download source: {names}.")
+    } else {
+        format!(
+            " {} mods have no download source: {names}.",
+            unresolved.len()
+        )
+    }
+}
+
+#[must_use]
+pub(crate) fn unresolved_sources_issue(unresolved: &[String]) -> Option<SourceNotice> {
+    if unresolved.is_empty() {
+        return None;
+    }
+    let pronoun = if unresolved.len() == 1 { "it" } else { "them" };
+    Some(SourceNotice {
+        severity: SourceNoticeSeverity::Warning,
+        text: format!(
+            "{} BIO will not be able to download {pronoun}.",
+            unresolved_suffix(unresolved).trim()
+        ),
+        remedy: SourceRemedy::None,
     })
 }
 

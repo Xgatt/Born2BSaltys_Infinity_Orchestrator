@@ -31,8 +31,23 @@ pub(crate) fn installed_source_refs_path() -> std::path::PathBuf {
 pub(crate) fn load_refs_file_at(path: &Path) -> ModSourceRefsFile {
     fs::read_to_string(path).map_or_else(
         |_| ModSourceRefsFile::default(),
-        |value| toml::from_str::<ModSourceRefsFile>(&value).unwrap_or_default(),
+        |value| parse_refs_file_text(&value),
     )
+}
+
+pub(crate) fn parse_refs_file_text(text: &str) -> ModSourceRefsFile {
+    toml::from_str::<ModSourceRefsFile>(text).unwrap_or_default()
+}
+
+pub(crate) fn installed_source_ids_from_refs_file(
+    refs_file: &ModSourceRefsFile,
+) -> BTreeMap<String, String> {
+    refs_file
+        .sources
+        .iter()
+        .map(|(tp2, source_id)| (normalize_mod_download_tp2(tp2), source_id.clone()))
+        .filter(|(tp2, source_id)| !tp2.is_empty() && !source_id.trim().is_empty())
+        .collect()
 }
 
 pub(super) fn load_installed_source_id_and_ref(tp2: &str) -> Option<(String, String)> {

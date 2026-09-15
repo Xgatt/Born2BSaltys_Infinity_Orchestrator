@@ -8,30 +8,45 @@ use std::path::{Path, PathBuf};
 use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::warn;
 
 use crate::app::state::WizardState;
 use crate::app::step5::diagnostics::build_weidu_export_lines;
 
 const SHARE_CODE_PREFIX: &str = "BIO-MODLIST-V1:";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ExportLogSource {
+    Installed,
+    #[default]
+    Rebuilt,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ShareExportSources {
     pub(crate) mod_downloads_user: Option<String>,
     pub(crate) mod_installed_refs: Option<String>,
+    pub(crate) unresolved_mods: Vec<String>,
+    pub(crate) log_source: ExportLogSource,
 }
 
 pub(crate) fn export_modlist_share_code(state: &WizardState) -> Result<String, String> {
+    build_and_export_share_code(state, ExportLogSource::Rebuilt)
+}
+
+pub(crate) fn export_modlist_share_code_for_completed_install(
+    state: &WizardState,
+) -> Result<String, String> {
+    build_and_export_share_code(state, ExportLogSource::Installed)
+}
+
+fn build_and_export_share_code(
+    state: &WizardState,
+    log_source: ExportLogSource,
+) -> Result<String, String> {
     crate::app::mod_downloads::ensure_mod_downloads_files().map_err(|err| err.to_string())?;
 
-    let mod_downloads_user = if crate::app::mod_downloads::active_modlist_downloads_path().is_some()
-    {
-        build_resolved_source_overrides(state)?
-    } else {
-        read_optional_file_text(
-            &crate::app::mod_downloads::mod_downloads_user_path(),
-            omit_stock_mod_downloads_user,
-        )
-    };
+    let resolved = build_resolved_source_overrides(state)?;
 
     let mod_installed_refs = if crate::app::mod_downloads::active_modlist_downloads_path().is_some()
     {
@@ -46,8 +61,10 @@ pub(crate) fn export_modlist_share_code(state: &WizardState) -> Result<String, S
     export_modlist_share_code_with(
         state,
         &ShareExportSources {
-            mod_downloads_user,
+            mod_downloads_user: resolved.toml,
             mod_installed_refs,
+            unresolved_mods: resolved.unresolved,
+            log_source,
         },
     )
 }
@@ -56,7 +73,7 @@ pub(crate) fn export_modlist_share_code_with(
     state: &WizardState,
     sources: &ShareExportSources,
 ) -> Result<String, String> {
-    let weidu_logs = export_weidu_logs(state)?;
+    let weidu_logs = export_weidu_logs(state, sources.log_source)?;
     if relevant_weidu_text_is_empty(
         state,
         weidu_logs.bgee.as_deref(),
@@ -88,9 +105,23 @@ pub(crate) fn export_modlist_share_code_with(
             "files": mod_configs,
         },
     });
+    insert_unresolved_mods(&mut payload, &sources.unresolved_mods);
     insert_export_provenance(&mut payload, state);
     let payload_text = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
     encode_share_payload_text(&payload_text)
+}
+
+fn insert_unresolved_mods(payload: &mut serde_json::Value, unresolved_mods: &[String]) {
+    if unresolved_mods.is_empty() {
+        return;
+    }
+    let Some(overrides) = payload
+        .get_mut("source_overrides")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return;
+    };
+    overrides.insert("unresolved_mods".to_string(), json!(unresolved_mods));
 }
 
 pub(crate) fn encode_share_payload_text(payload_text: &str) -> Result<String, String> {
@@ -157,6 +188,7 @@ pub(crate) struct ModlistSharePreview {
     pub(crate) author: Option<String>,
     pub(crate) description: Option<String>,
     pub(crate) forked_from: Vec<ForkAncestor>,
+    pub(crate) unresolved_mods: Vec<String>,
 }
 
 pub(crate) fn preview_modlist_share_code(code: &str) -> Result<ModlistSharePreview, String> {
@@ -182,13 +214,19 @@ pub(crate) fn import_modlist_share_code(
         .as_deref()
         .filter(|text| !text.trim().is_empty())
     {
-        let pin_path = crate::app::mod_downloads::active_modlist_downloads_path()
-            .unwrap_or_else(crate::app::mod_downloads::mod_downloads_user_path);
-        if let Some(parent) = pin_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("create per-modlist dir failed: {err}"))?;
+        if let Some(pin_path) = crate::app::mod_downloads::active_modlist_downloads_path() {
+            if let Some(parent) = pin_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| format!("create per-modlist dir failed: {err}"))?;
+            }
+            write_text_file(pin_path, text)?;
+        } else {
+            warn!(
+                target = "share",
+                "import: no active modlist; skipping source overrides write \
+                 (the global mod_downloads_user.toml is left untouched)"
+            );
         }
-        write_text_file(pin_path, text)?;
     }
     if let Some(text) = payload
         .installed_refs
@@ -206,7 +244,20 @@ pub(crate) fn import_modlist_share_code(
     state.step2.selected_source_ids =
         crate::app::app_step2_update_source_refs::load_installed_source_ids();
     state.step5.last_status_text = "Imported modlist share code".to_string();
+    warn_on_unresolved_mods(&preview);
     Ok(preview)
+}
+
+fn warn_on_unresolved_mods(preview: &ModlistSharePreview) {
+    if preview.unresolved_mods.is_empty() {
+        return;
+    }
+    warn!(
+        target = "share",
+        "import: {} mod(s) have no download source: {}",
+        preview.unresolved_mods.len(),
+        preview.unresolved_mods.join(", ")
+    );
 }
 
 #[derive(Deserialize)]
@@ -255,6 +306,8 @@ pub(crate) struct ModlistShareWeiduLogs {
 #[derive(Default, Deserialize)]
 pub(crate) struct ModlistShareSourceOverrides {
     pub(crate) mod_downloads_user_toml: Option<String>,
+    #[serde(default)]
+    pub(crate) unresolved_mods: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -355,6 +408,7 @@ fn share_preview(payload: &ModlistSharePayload) -> Result<ModlistSharePreview, S
         author: payload.author.clone(),
         description: payload.description.clone(),
         forked_from: payload.forked_from.clone(),
+        unresolved_mods: payload.source_overrides.unresolved_mods.clone(),
     })
 }
 
@@ -529,7 +583,10 @@ struct ExportWeiduLogs {
     bg2ee: Option<String>,
 }
 
-fn export_weidu_logs(state: &WizardState) -> Result<ExportWeiduLogs, String> {
+fn export_weidu_logs(
+    state: &WizardState,
+    log_source: ExportLogSource,
+) -> Result<ExportWeiduLogs, String> {
     if state.step1.installs_exactly_from_weidu_logs() {
         return Ok(ExportWeiduLogs {
             bgee: read_exact_source_weidu_log(
@@ -542,14 +599,140 @@ fn export_weidu_logs(state: &WizardState) -> Result<ExportWeiduLogs, String> {
             )?,
         });
     }
-    Ok(ExportWeiduLogs {
-        bgee: Some(weidu_log_text(&build_weidu_export_lines(
-            &state.step3.bgee_items,
-        ))),
-        bg2ee: Some(weidu_log_text(&build_weidu_export_lines(
-            &state.step3.bg2ee_items,
-        ))),
+    match log_source {
+        ExportLogSource::Rebuilt => Ok(ExportWeiduLogs {
+            bgee: Some(rebuilt_weidu_log_text(&state.step3.bgee_items)),
+            bg2ee: Some(rebuilt_weidu_log_text(&state.step3.bg2ee_items)),
+        }),
+        ExportLogSource::Installed => Ok(installed_weidu_logs(state)),
+    }
+}
+
+fn installed_weidu_logs(state: &WizardState) -> ExportWeiduLogs {
+    match state.step1.game_install.as_str() {
+        "EET" => ExportWeiduLogs {
+            bgee: Some(installed_or_rebuilt_log(
+                &state.step1.eet_pre_dir,
+                &state.step3.bgee_items,
+            )),
+            bg2ee: Some(installed_or_rebuilt_log(
+                &state.step1.eet_new_dir,
+                &state.step3.bg2ee_items,
+            )),
+        },
+        "BG2EE" => ExportWeiduLogs {
+            bgee: Some(rebuilt_weidu_log_text(&state.step3.bgee_items)),
+            bg2ee: Some(installed_or_rebuilt_log(
+                &state.step1.generate_directory,
+                &state.step3.bg2ee_items,
+            )),
+        },
+        _ => ExportWeiduLogs {
+            bgee: Some(installed_or_rebuilt_log(
+                &state.step1.generate_directory,
+                &state.step3.bgee_items,
+            )),
+            bg2ee: Some(rebuilt_weidu_log_text(&state.step3.bg2ee_items)),
+        },
+    }
+}
+
+fn installed_weidu_log_path(dir: &str) -> Option<PathBuf> {
+    let dir = dir.trim();
+    if dir.is_empty() {
+        return None;
+    }
+    let entries = fs::read_dir(dir).ok()?;
+    entries.flatten().map(|entry| entry.path()).find(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("weidu.log"))
     })
+}
+
+fn rebuilt_weidu_log_text(items: &[crate::app::state::Step3ItemState]) -> String {
+    weidu_log_text(&build_weidu_export_lines(items))
+}
+
+fn installed_or_rebuilt_log(dir: &str, items: &[crate::app::state::Step3ItemState]) -> String {
+    let Some(path) = installed_weidu_log_path(dir) else {
+        warn!(
+            target = "share",
+            "no installed WeiDU log found in {}; falling back to rebuilt lines",
+            dir.trim()
+        );
+        return rebuilt_weidu_log_text(items);
+    };
+    match fs::read_to_string(&path) {
+        Ok(text) if !text.trim().is_empty() => reappend_wlb_inputs(&text, items),
+        Ok(_) => {
+            warn!(
+                target = "share",
+                "installed WeiDU log at {} is empty; falling back to rebuilt lines",
+                path.display()
+            );
+            rebuilt_weidu_log_text(items)
+        }
+        Err(err) => {
+            warn!(
+                target = "share",
+                "installed WeiDU log missing at {} ({err}); falling back to rebuilt lines",
+                path.display()
+            );
+            rebuilt_weidu_log_text(items)
+        }
+    }
+}
+
+fn reappend_wlb_inputs(log_text: &str, items: &[crate::app::state::Step3ItemState]) -> String {
+    let markers = collect_wlb_markers(items);
+    if markers.is_empty() {
+        return log_text.to_string();
+    }
+    log_text
+        .lines()
+        .map(|line| reappend_wlb_marker_on_line(line, &markers))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn collect_wlb_markers(
+    items: &[crate::app::state::Step3ItemState],
+) -> Vec<(String, String, String)> {
+    let marker = "@wlb-inputs:";
+    items
+        .iter()
+        .filter_map(|item| {
+            let lower = item.raw_line.to_ascii_lowercase();
+            let start = lower.find(marker)?;
+            let value = item.raw_line[start + marker.len()..].trim();
+            if value.is_empty() {
+                return None;
+            }
+            Some((
+                crate::app::mod_downloads::normalize_mod_download_tp2(&item.tp_file),
+                item.component_id.trim().to_string(),
+                value.to_string(),
+            ))
+        })
+        .collect()
+}
+
+fn reappend_wlb_marker_on_line(line: &str, markers: &[(String, String, String)]) -> String {
+    if line.to_ascii_lowercase().contains("@wlb-inputs:") {
+        return line.to_string();
+    }
+    let Ok(component) = crate::mods::component::Component::parse_weidu_line(line) else {
+        return line.to_string();
+    };
+    let tp2 = crate::app::mod_downloads::normalize_mod_download_tp2(&component.tp_file);
+    let component_id = component.component.trim().to_string();
+    let Some((_, _, value)) = markers.iter().find(|(marker_tp2, marker_component, _)| {
+        *marker_tp2 == tp2 && *marker_component == component_id
+    }) else {
+        return line.to_string();
+    };
+    format!("{line} // @wlb-inputs: {value}")
 }
 
 fn read_exact_source_weidu_log(
@@ -706,26 +889,6 @@ fn weidu_log_text(lines: &[String]) -> String {
     out.join("\n")
 }
 
-#[derive(Deserialize)]
-struct ShareModDownloadsFile {
-    #[serde(default)]
-    mods: Vec<ShareModDownloadMod>,
-}
-
-#[derive(Deserialize)]
-struct ShareModDownloadMod {
-    name: Option<String>,
-    tp2: Option<String>,
-    #[serde(default)]
-    sources: Vec<ShareModDownloadSource>,
-}
-
-#[derive(Deserialize)]
-struct ShareModDownloadSource {
-    id: Option<String>,
-    repo: Option<String>,
-}
-
 pub(crate) fn pin_source_to_installed_ref(
     source: &mut crate::app::mod_downloads::ModDownloadSource,
     installed_ref: Option<&str>,
@@ -743,15 +906,52 @@ pub(crate) fn pin_source_to_installed_ref(
     source.branch = None;
 }
 
-fn build_resolved_source_overrides(state: &WizardState) -> Result<Option<String>, String> {
-    use crate::app::app_step2_update_source_refs::load_refs_file_at;
+pub(crate) struct ResolvedSources {
+    pub(crate) toml: Option<String>,
+    pub(crate) unresolved: Vec<String>,
+}
 
-    let source_load = crate::app::mod_downloads::load_mod_download_sources();
-    let installed_ids = crate::app::app_step2_update_source_refs::load_installed_source_ids();
-    let refs_file =
-        load_refs_file_at(&crate::app::app_step2_update_source_refs::installed_source_refs_path());
+fn build_resolved_source_overrides(state: &WizardState) -> Result<ResolvedSources, String> {
+    let default_text = fs::read_to_string(crate::app::mod_downloads::mod_downloads_default_path())
+        .unwrap_or_default();
+    let user_text = fs::read_to_string(crate::app::mod_downloads::mod_downloads_user_path())
+        .unwrap_or_default();
+    let modlist_text = crate::app::mod_downloads::active_modlist_downloads_path()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    let refs_text =
+        fs::read_to_string(crate::app::app_step2_update_source_refs::installed_source_refs_path())
+            .unwrap_or_default();
+    build_resolved_source_overrides_from_texts(
+        state,
+        &default_text,
+        &user_text,
+        &modlist_text,
+        &refs_text,
+    )
+}
+
+pub(crate) fn build_resolved_source_overrides_from_texts(
+    state: &WizardState,
+    default_text: &str,
+    user_text: &str,
+    modlist_text: &str,
+    refs_text: &str,
+) -> Result<ResolvedSources, String> {
+    use crate::app::app_step2_update_source_refs::{
+        installed_source_ids_from_refs_file, parse_refs_file_text,
+    };
+
+    let source_load = crate::app::mod_downloads::load_mod_download_sources_from_texts(
+        default_text,
+        user_text,
+        modlist_text,
+    );
+    let refs_file = parse_refs_file_text(refs_text);
+    let installed_ids = installed_source_ids_from_refs_file(&refs_file);
 
     let mut toml_out = String::new();
+    let mut unresolved = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for mod_state in state
         .step2
@@ -759,20 +959,24 @@ fn build_resolved_source_overrides(state: &WizardState) -> Result<Option<String>
         .iter()
         .chain(state.step2.bg2ee_mods.iter())
     {
+        if !mod_state
+            .components
+            .iter()
+            .any(|component| component.checked)
+        {
+            continue;
+        }
+        let normalized_tp2 =
+            crate::app::mod_downloads::normalize_mod_download_tp2(&mod_state.tp_file);
+        if !seen.insert(normalized_tp2.clone()) {
+            continue;
+        }
         let Some(mut source) =
             resolve_mod_config_source(state, &source_load, &installed_ids, &mod_state.tp_file)
         else {
+            unresolved.push(display_mod_name(mod_state));
             continue;
         };
-        let normalized_tp2 =
-            crate::app::mod_downloads::normalize_mod_download_tp2(&mod_state.tp_file);
-        let key = (
-            normalized_tp2.clone(),
-            source.source_id.trim().to_ascii_lowercase(),
-        );
-        if !seen.insert(key) {
-            continue;
-        }
         let installed_ref = refs_file.refs.get(&normalized_tp2);
         pin_source_to_installed_ref(&mut source, installed_ref.map(String::as_str));
         let block = serialize_resolved_mod(&mod_state.tp_file, &mod_state.name, &source);
@@ -782,14 +986,25 @@ fn build_resolved_source_overrides(state: &WizardState) -> Result<Option<String>
         toml_out.push_str(&block);
     }
 
-    if toml_out.is_empty() {
-        return Ok(None);
+    let toml = if toml_out.is_empty() {
+        None
+    } else {
+        toml::from_str::<crate::app::mod_downloads::ModDownloadsFile>(&toml_out).map_err(
+            |err| format!("resolved source overrides failed round-trip validation: {err}"),
+        )?;
+        Some(toml_out)
+    };
+
+    Ok(ResolvedSources { toml, unresolved })
+}
+
+fn display_mod_name(mod_state: &crate::app::state::Step2ModState) -> String {
+    let name = mod_state.name.trim();
+    if name.is_empty() {
+        mod_state.tp_file.trim().to_string()
+    } else {
+        name.to_string()
     }
-
-    toml::from_str::<crate::app::mod_downloads::ModDownloadsFile>(&toml_out)
-        .map_err(|err| format!("resolved source overrides failed round-trip validation: {err}"))?;
-
-    Ok(Some(toml_out))
 }
 
 fn serialize_resolved_mod(
@@ -887,22 +1102,6 @@ fn build_per_modlist_installed_refs(state: &WizardState) -> Option<String> {
     toml::to_string_pretty(&combined)
         .ok()
         .filter(|s| !s.trim().is_empty())
-}
-
-fn omit_stock_mod_downloads_user(text: &str) -> bool {
-    let Ok(parsed) = toml::from_str::<ShareModDownloadsFile>(text) else {
-        return false;
-    };
-    let [mod_entry] = parsed.mods.as_slice() else {
-        return false;
-    };
-    let [source_entry] = mod_entry.sources.as_slice() else {
-        return false;
-    };
-    mod_entry.name.as_deref() == Some("Example Mod")
-        && mod_entry.tp2.as_deref() == Some("examplemod")
-        && source_entry.id.as_deref() == Some("main")
-        && source_entry.repo.as_deref() == Some("ExampleUser/ExampleMod")
 }
 
 fn zlib_compress(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -1174,6 +1373,7 @@ mod tests {
         let sources = ShareExportSources {
             mod_downloads_user: Some("[[mods]]\nname = \"X\"".to_string()),
             mod_installed_refs: Some("[sources]\nx = \"y\"".to_string()),
+            ..ShareExportSources::default()
         };
         let code = export_modlist_share_code_with(&state, &sources).expect("export");
         let preview = preview_modlist_share_code(&code).expect("preview");
@@ -1275,8 +1475,12 @@ mod tests {
         assert!(parsed.is_ok(), "url source block must round-trip");
     }
 
+    fn default_tier_toml(tp2: &str, url: &str) -> String {
+        format!("[[mods]]\nname = \"{tp2}\"\ntp2 = \"{tp2}\"\nurl = \"{url}\"\n")
+    }
+
     #[test]
-    fn export_ambient_unset_is_byte_identical_verbatim() {
+    fn default_tier_mod_is_written_into_the_code() {
         let _lock = crate::app::mod_downloads::AMBIENT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1288,32 +1492,103 @@ mod tests {
             "precondition: ambient is None"
         );
 
-        let is_set = crate::app::mod_downloads::active_modlist_downloads_path().is_some();
-        assert!(!is_set, "ambient-unset path must produce verbatim export");
+        let default_text = default_tier_toml("testmod", "https://github.com/T/M");
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![make_step2_mod("testmod", "TestMod")];
+
+        let resolved =
+            build_resolved_source_overrides_from_texts(&state, &default_text, "", "", "")
+                .expect("resolve");
+        assert!(
+            resolved
+                .toml
+                .as_deref()
+                .is_some_and(|toml| toml.contains("\"testmod\"")),
+            "a mod known only to the default tier must get a source block: {:?}",
+            resolved.toml
+        );
+        assert!(resolved.unresolved.is_empty());
     }
 
     #[test]
-    fn export_skips_unresolvable_mod() {
-        let _lock = crate::app::mod_downloads::AMBIENT_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _guard = AmbientGuard::acquire();
+    fn unresolvable_mod_is_listed_by_name_and_omitted_from_sources() {
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![make_step2_mod("nosource", "NoSourceMod")];
 
-        let tmp_dir = unique_share_tmp_dir("skips_unresolvable");
-        crate::app::mod_downloads::set_active_modlist_dir(Some(tmp_dir.clone()));
+        let resolved = build_resolved_source_overrides_from_texts(&state, "", "", "", "")
+            .expect("resolve must not error");
+        assert!(
+            resolved.toml.is_none(),
+            "a mod no tier knows must not produce a source block"
+        );
+        assert_eq!(resolved.unresolved, vec!["NoSourceMod".to_string()]);
+    }
 
+    #[test]
+    fn unchecked_mods_are_neither_exported_nor_unresolved() {
+        let default_text = default_tier_toml("checkedmod", "https://github.com/T/M");
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![
+            make_step2_mod("checkedmod", "CheckedMod"),
+            make_unchecked_step2_mod("uncheckedmod", "UncheckedMod"),
+        ];
+
+        let resolved =
+            build_resolved_source_overrides_from_texts(&state, &default_text, "", "", "")
+                .expect("resolve");
+        let toml_out = resolved.toml.expect("checked mod produced a source block");
+        assert!(
+            toml_out.contains("\"checkedmod\""),
+            "checked mod must be exported: {toml_out}"
+        );
+        assert!(
+            !toml_out.contains("\"uncheckedmod\""),
+            "unchecked mod must not be exported: {toml_out}"
+        );
+        assert!(
+            resolved.unresolved.is_empty(),
+            "unchecked mod must not be counted as unresolved: {:?}",
+            resolved.unresolved
+        );
+    }
+
+    #[test]
+    fn unresolved_mods_round_trip_through_the_payload_and_preview() {
+        let sources = ShareExportSources {
+            unresolved_mods: vec!["NoSourceMod".to_string()],
+            ..ShareExportSources::default()
+        };
+        let code = export_modlist_share_code_with(&state_with_one_bgee_component(), &sources)
+            .expect("export");
+        let preview = preview_modlist_share_code(&code).expect("preview");
+        assert_eq!(preview.unresolved_mods, vec!["NoSourceMod".to_string()]);
+    }
+
+    #[test]
+    fn empty_unresolved_mods_key_is_omitted_from_the_payload() {
+        let code = export_modlist_share_code_with(
+            &state_with_one_bgee_component(),
+            &ShareExportSources::default(),
+        )
+        .expect("export");
+        let payload = decode_share_payload(&code).expect("decode");
+        assert!(payload.source_overrides.unresolved_mods.is_empty());
+    }
+
+    #[test]
+    fn empty_mods_list_yields_no_overrides_and_no_unresolved() {
         let mut state = WizardState::default();
         state.step3.bgee_items = vec![];
         state.step2.bgee_mods = vec![];
 
-        let result = build_resolved_source_overrides(&state);
+        let result = build_resolved_source_overrides_from_texts(&state, "", "", "", "");
         assert!(result.is_ok(), "empty mods list must not error");
+        let resolved = result.unwrap();
         assert!(
-            result.unwrap().is_none(),
+            resolved.toml.is_none(),
             "empty mods list must yield None source overrides"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
+        assert!(resolved.unresolved.is_empty());
     }
 
     fn count_mods_blocks_for_tp2(toml_out: &str, tp2: &str) -> usize {
@@ -1347,6 +1622,31 @@ mod tests {
         count
     }
 
+    fn checked_component(id: &str) -> crate::app::state::Step2ComponentState {
+        crate::app::state::Step2ComponentState {
+            component_id: id.to_string(),
+            label: id.to_string(),
+            weidu_group: None,
+            collapsible_group: None,
+            collapsible_group_is_umbrella: false,
+            collapsible_group_combinable: false,
+            raw_line: String::new(),
+            prompt_summary: None,
+            prompt_events: Vec::new(),
+            is_meta_mode_component: false,
+            disabled: false,
+            compat_kind: None,
+            compat_source: None,
+            compat_related_mod: None,
+            compat_related_component: None,
+            compat_graph: None,
+            compat_evidence: None,
+            disabled_reason: None,
+            checked: true,
+            selected_order: Some(1),
+        }
+    }
+
     fn make_step2_mod(tp_file: &str, name: &str) -> crate::app::state::Step2ModState {
         crate::app::state::Step2ModState {
             name: name.to_string(),
@@ -1360,56 +1660,41 @@ mod tests {
             update_locked: false,
             mod_prompt_summary: None,
             mod_prompt_events: Vec::new(),
-            checked: false,
+            checked: true,
             hidden_components: Vec::new(),
-            components: Vec::new(),
+            components: vec![checked_component("0")],
         }
     }
 
-    fn write_per_modlist_source(dir: &std::path::Path, tp2: &str) -> std::path::PathBuf {
-        std::fs::create_dir_all(dir).unwrap();
-        let path = dir.join("mod_downloads_user.toml");
-        std::fs::write(
-            &path,
-            format!(
-                "[[mods]]\nname = \"{tp2}\"\ntp2 = \"{tp2}\"\n\n  [[mods.sources]]\n  id = \"github\"\n  label = \"GitHub\"\n  type = \"github\"\n  url = \"https://github.com/T/M\"\n  repo = \"T/M\"\n  tag = \"v1\"\n  default = true\n"
-            ),
-        )
-        .unwrap();
-        path
+    fn make_unchecked_step2_mod(tp_file: &str, name: &str) -> crate::app::state::Step2ModState {
+        crate::app::state::Step2ModState {
+            checked: false,
+            components: Vec::new(),
+            ..make_step2_mod(tp_file, name)
+        }
     }
 
-    fn unique_share_tmp_dir(label: &str) -> std::path::PathBuf {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
-        std::env::temp_dir().join(format!(
-            "bio_share_test_{}_{}_{label}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ))
+    fn per_modlist_source_toml(tp2: &str) -> String {
+        format!(
+            "[[mods]]\nname = \"{tp2}\"\ntp2 = \"{tp2}\"\n\n  [[mods.sources]]\n  id = \"github\"\n  label = \"GitHub\"\n  url = \"https://github.com/T/M\"\n  repo = \"T/M\"\n  tag = \"v1\"\n  default = true\n"
+        )
     }
 
     #[test]
     fn export_dedup_eet_both_tabs_emit_each_mod_once() {
-        let _lock = crate::app::mod_downloads::AMBIENT_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _guard = AmbientGuard::acquire();
-
-        let tmp_dir = unique_share_tmp_dir("eet_dedup");
-        write_per_modlist_source(&tmp_dir, "cdtweaks");
-        crate::app::mod_downloads::set_active_modlist_dir(Some(tmp_dir.clone()));
+        let modlist_text = per_modlist_source_toml("cdtweaks");
 
         let mut state = WizardState::default();
         let mod_entry = make_step2_mod("cdtweaks", "cdtweaks");
         state.step2.bgee_mods = vec![mod_entry.clone()];
         state.step2.bg2ee_mods = vec![mod_entry];
 
-        let result = build_resolved_source_overrides(&state);
+        let result = build_resolved_source_overrides_from_texts(&state, "", "", &modlist_text, "");
         assert!(result.is_ok(), "build must not error: {:?}", result.err());
 
         let toml_out = result
             .unwrap()
+            .toml
             .expect("resolved overrides must produce Some output");
 
         let block_count = count_mods_blocks_for_tp2(&toml_out, "cdtweaks");
@@ -1417,30 +1702,22 @@ mod tests {
             block_count, 1,
             "EET dual-tab mod must appear exactly once in export; got {block_count}:\n{toml_out}"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn export_dedup_single_game_tab_is_noop() {
-        let _lock = crate::app::mod_downloads::AMBIENT_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _guard = AmbientGuard::acquire();
-
-        let tmp_dir = unique_share_tmp_dir("single_tab");
-        write_per_modlist_source(&tmp_dir, "testmod");
-        crate::app::mod_downloads::set_active_modlist_dir(Some(tmp_dir.clone()));
+        let modlist_text = per_modlist_source_toml("testmod");
 
         let mut state = WizardState::default();
         state.step2.bgee_mods = vec![make_step2_mod("testmod", "TestMod")];
         state.step2.bg2ee_mods = vec![];
 
-        let result = build_resolved_source_overrides(&state);
+        let result = build_resolved_source_overrides_from_texts(&state, "", "", &modlist_text, "");
         assert!(result.is_ok(), "build must not error: {:?}", result.err());
 
         let toml_out = result
             .unwrap()
+            .toml
             .expect("single-game must produce Some output");
 
         let block_count = count_mods_blocks_for_tp2(&toml_out, "testmod");
@@ -1448,8 +1725,6 @@ mod tests {
             block_count, 1,
             "single-game mod must appear exactly once; got {block_count}:\n{toml_out}"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
@@ -1538,17 +1813,150 @@ mod tests {
     }
 
     #[test]
-    fn import_ambient_unset_writes_global() {
+    fn import_without_an_active_list_leaves_the_global_sources_untouched() {
         let _lock = crate::app::mod_downloads::AMBIENT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _guard = AmbientGuard::acquire();
         crate::app::mod_downloads::set_active_modlist_dir(None);
 
-        let path = crate::app::mod_downloads::active_modlist_downloads_path();
         assert!(
-            path.is_none(),
-            "ambient unset: no per-modlist path resolved"
+            crate::app::mod_downloads::active_modlist_downloads_path().is_none(),
+            "no active list ⇒ the import write target is None, so the source \
+             overrides write is skipped and the global mod_downloads_user.toml \
+             is never touched"
+        );
+    }
+
+    #[test]
+    fn installed_logs_are_preferred_when_present() {
+        let mut state = WizardState::default();
+        state.step1.game_install = "EET".to_string();
+
+        let eet_pre_dir =
+            std::env::temp_dir().join(format!("bio_share_installed_pre_{}", std::process::id()));
+        let eet_new_dir =
+            std::env::temp_dir().join(format!("bio_share_installed_new_{}", std::process::id()));
+        let first_game_order_log_dir =
+            std::env::temp_dir().join(format!("bio_share_order_bgee_{}", std::process::id()));
+        let second_game_order_log_dir =
+            std::env::temp_dir().join(format!("bio_share_order_bg2ee_{}", std::process::id()));
+        std::fs::create_dir_all(&eet_pre_dir).unwrap();
+        std::fs::create_dir_all(&eet_new_dir).unwrap();
+        std::fs::create_dir_all(&first_game_order_log_dir).unwrap();
+        std::fs::create_dir_all(&second_game_order_log_dir).unwrap();
+        std::fs::write(
+            eet_pre_dir.join("WeiDU.log"),
+            "~EET/EET.TP2~ #0 #0 // EET core: v14.0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            eet_new_dir.join("WeiDU.log"),
+            "~A/A.TP2~ #0 #0 // Some component: v1.0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            first_game_order_log_dir.join("weidu.log"),
+            "~EET/EET.TP2~ #0 #0 // EET core\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second_game_order_log_dir.join("weidu.log"),
+            "~A/A.TP2~ #0 #0 // Some component\n",
+        )
+        .unwrap();
+        state.step1.eet_pre_dir = eet_pre_dir.to_string_lossy().to_string();
+        state.step1.eet_new_dir = eet_new_dir.to_string_lossy().to_string();
+        state.step1.eet_bgee_log_folder = first_game_order_log_dir.to_string_lossy().to_string();
+        state.step1.eet_bg2ee_log_folder = second_game_order_log_dir.to_string_lossy().to_string();
+        state.step3.bg2ee_items = vec![crate::app::state::Step3ItemState {
+            tp_file: "A.TP2".to_string(),
+            component_id: "0".to_string(),
+            mod_name: "A".to_string(),
+            component_label: "Some component".to_string(),
+            raw_line: "~A/A.TP2~ #0 #0 // Some component: v1.0 // @wlb-inputs: y".to_string(),
+            prompt_summary: None,
+            prompt_events: Vec::new(),
+            selected_order: 1,
+            block_id: String::new(),
+            is_parent: false,
+            parent_placeholder: false,
+        }];
+
+        let logs = export_weidu_logs(&state, ExportLogSource::Installed).expect("export logs");
+        let bg2ee = logs.bg2ee.expect("bg2ee log present");
+        assert!(bg2ee.contains(": v1.0"), "version tail survives: {bg2ee}");
+        assert!(
+            bg2ee.contains("@wlb-inputs: y"),
+            "wlb-inputs marker re-appended: {bg2ee}"
+        );
+
+        let _ = std::fs::remove_dir_all(&eet_pre_dir);
+        let _ = std::fs::remove_dir_all(&eet_new_dir);
+        let _ = std::fs::remove_dir_all(&first_game_order_log_dir);
+        let _ = std::fs::remove_dir_all(&second_game_order_log_dir);
+    }
+
+    #[test]
+    fn single_game_installed_log_goes_to_that_games_key() {
+        let mut state = WizardState::default();
+        state.step1.game_install = "BG2EE".to_string();
+
+        let generate_dir =
+            std::env::temp_dir().join(format!("bio_share_installed_gen_{}", std::process::id()));
+        std::fs::create_dir_all(&generate_dir).unwrap();
+        std::fs::write(
+            generate_dir.join("WeiDU.log"),
+            "~B/B.TP2~ #0 #0 // Some component: v2.0\n",
+        )
+        .unwrap();
+        state.step1.generate_directory = generate_dir.to_string_lossy().to_string();
+        state.step3.bg2ee_items = vec![crate::app::state::Step3ItemState {
+            tp_file: "B.TP2".to_string(),
+            component_id: "0".to_string(),
+            mod_name: "B".to_string(),
+            component_label: "Some component".to_string(),
+            raw_line: String::new(),
+            prompt_summary: None,
+            prompt_events: Vec::new(),
+            selected_order: 1,
+            block_id: String::new(),
+            is_parent: false,
+            parent_placeholder: false,
+        }];
+
+        let logs = export_weidu_logs(&state, ExportLogSource::Installed).expect("export logs");
+        let second_game_text = logs.bg2ee.expect("bg2ee log present");
+        assert!(
+            second_game_text.contains(": v2.0"),
+            "bg2ee carries the tail: {second_game_text}"
+        );
+        let first_game_text = logs.bgee.expect("bgee log present");
+        assert!(
+            !first_game_text.contains(": v2.0"),
+            "bgee must not read the other game's folder: {first_game_text}"
+        );
+
+        let _ = std::fs::remove_dir_all(&generate_dir);
+    }
+
+    #[test]
+    fn missing_installed_log_falls_back_to_rebuilt_lines() {
+        let state = state_with_one_bgee_component();
+        let logs = export_weidu_logs(&state, ExportLogSource::Installed).expect("export logs");
+        let bgee = logs.bgee.expect("rebuilt fallback present");
+        assert!(
+            bgee.contains("EEFixPack"),
+            "fallback rebuilt from step3: {bgee}"
+        );
+    }
+
+    #[test]
+    fn rebuilt_is_the_default() {
+        assert_eq!(ExportLogSource::default(), ExportLogSource::Rebuilt);
+        assert_eq!(
+            ShareExportSources::default().log_source,
+            ExportLogSource::Rebuilt
         );
     }
 }

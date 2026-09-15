@@ -109,6 +109,8 @@ struct ReferenceModlist {
     allow_auto_install: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     forked_from: Vec<ForkAncestor>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unresolved_mods: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -137,6 +139,7 @@ fn write_reference_modlist(
         format_version: payload.format_version,
         allow_auto_install: payload.allow_auto_install,
         forked_from: payload.forked_from.clone(),
+        unresolved_mods: payload.source_overrides.unresolved_mods.clone(),
     };
     let text = toml::to_string_pretty(&reference_modlist).map_err(|err| err.to_string())?;
     write_entry(writer, "reference/modlist.toml", text.as_bytes())
@@ -268,7 +271,7 @@ mod tests {
                 "bgee": "~EEFIXPACK/EEFIXPACK.TP2~ #0 #0 // Core Fixes: 1.0",
                 "bg2ee": "~EEFIXPACK/EEFIXPACK.TP2~ #0 #0 // Core Fixes: 1.0"
             },
-            "source_overrides": { "mod_downloads_user_toml": "[[mods]]\nname = \"X\"\n" },
+            "source_overrides": { "mod_downloads_user_toml": "[[mods]]\nname = \"X\"\n", "unresolved_mods": ["Some Mod"] },
             "installed_refs": { "mod_installed_refs_toml": "[sources]\nx = \"y\"\n" },
             "mod_configs": {
                 "files": [
@@ -384,6 +387,14 @@ mod tests {
             parsed.get("description").and_then(toml::Value::as_str),
             Some("BG2EE with the fixpack, the UI mod and tweaks")
         );
+        let unresolved_mods = parsed
+            .get("unresolved_mods")
+            .and_then(toml::Value::as_array)
+            .expect("unresolved_mods present")
+            .iter()
+            .map(|value| value.as_str().expect("string entry").to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(unresolved_mods, vec!["Some Mod".to_string()]);
     }
 
     #[test]
@@ -404,6 +415,10 @@ mod tests {
                 "share-code.txt".to_string(),
             ]
         );
+
+        let modlist_toml = entry_text(&bytes, "reference/modlist.toml");
+        let parsed: toml::Value = toml::from_str(&modlist_toml).expect("modlist.toml parses");
+        assert!(parsed.get("unresolved_mods").is_none());
     }
 
     #[test]
