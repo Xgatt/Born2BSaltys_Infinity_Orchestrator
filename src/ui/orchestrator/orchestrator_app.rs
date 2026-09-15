@@ -35,7 +35,6 @@ use crate::registry::store_workspace::WorkspaceStore;
 use crate::registry::workspace_model::ModlistWorkspaceState;
 use crate::settings::model::AppSettings;
 use crate::settings::redesign_fields::{RedesignSettings, ThemeChoice};
-use crate::settings::redesign_store::RedesignSettingsStore;
 use crate::settings::store::SettingsStore;
 use crate::ui::create::state_create::CreateScreenState;
 use crate::ui::home::state_home::HomeScreenState;
@@ -59,7 +58,6 @@ use crate::ui::step5::state_step5::Step5ConsoleViewState;
 use crate::ui::workspace::state_workspace::WorkspaceViewState;
 use crate::ui::workspace::step5::state_workspace_step5::WorkspaceStep5State;
 
-const REDESIGN_SETTINGS_DEBOUNCE_MS: u64 = 1000;
 const BIO_SETTINGS_DEBOUNCE_MS: u64 = 1000;
 
 #[derive(Debug, Clone, Default)]
@@ -253,10 +251,6 @@ pub struct OrchestratorApp {
     pub create_screen_state: CreateScreenState,
 
     pub redesign_settings: RedesignSettings,
-    pub redesign_settings_store: RedesignSettingsStore,
-    pub redesign_settings_dirty: bool,
-    pub redesign_settings_last_dirty_at: Option<Instant>,
-    pub redesign_settings_last_saved: RedesignSettings,
     pub settings_screen_state: SettingsScreenState,
     pub(crate) github_auth_rx: Option<Receiver<GitHubOAuthFlowResult>>,
     pub tool_version_cache: ToolVersionCache,
@@ -352,30 +346,6 @@ fn load_registry(registry_store: &RegistryStore) -> RegistryLoad {
     }
 }
 
-fn load_redesign_settings(store: &RedesignSettingsStore) -> RedesignSettings {
-    match store.load() {
-        Ok(settings) => settings,
-        Err(err) => {
-            warn!(
-                target = "orchestrator",
-                "bio_redesign_settings.json load failed: {err}; backing up and using defaults"
-            );
-            match store.backup_corrupt_file() {
-                Ok(backup) => warn!(
-                    target = "orchestrator",
-                    "backed up corrupt redesign settings to {}",
-                    backup.display()
-                ),
-                Err(backup_err) => warn!(
-                    target = "orchestrator",
-                    "failed backing up corrupt redesign settings: {backup_err}"
-                ),
-            }
-            RedesignSettings::default()
-        }
-    }
-}
-
 impl OrchestratorApp {
     #[must_use]
     pub fn new(dev_mode: bool) -> Self {
@@ -399,8 +369,7 @@ impl OrchestratorApp {
 
         let persistence_cycle = RegistryPersistenceCycle::new_with_baseline(registry.clone());
 
-        let redesign_settings_store = RedesignSettingsStore::new_default();
-        let redesign_settings = load_redesign_settings(&redesign_settings_store);
+        let redesign_settings = bootstrap.general.clone();
         let theme_palette = match redesign_settings.theme_palette {
             ThemeChoice::Light => ThemePalette::Light,
             ThemeChoice::Dark => ThemePalette::Dark,
@@ -409,6 +378,7 @@ impl OrchestratorApp {
         let bio_settings_snapshot = AppSettings {
             exe_fingerprint: bootstrap.exe_fingerprint.clone(),
             step1: bootstrap.step1.clone().into(),
+            general: redesign_settings.clone(),
         };
 
         let mut app = Self {
@@ -435,11 +405,7 @@ impl OrchestratorApp {
             install_screen_state: InstallScreenState::default(),
             create_screen_state: CreateScreenState::new(),
 
-            redesign_settings_last_saved: redesign_settings.clone(),
             redesign_settings,
-            redesign_settings_store,
-            redesign_settings_dirty: false,
-            redesign_settings_last_dirty_at: None,
             settings_screen_state: SettingsScreenState::default(),
             github_auth_rx: None,
             tool_version_cache: ToolVersionCache::default(),
@@ -1263,30 +1229,6 @@ impl OrchestratorApp {
             }
         }
 
-        if self.redesign_settings_dirty
-            && self.redesign_settings != self.redesign_settings_last_saved
-        {
-            self.redesign_settings_last_dirty_at.get_or_insert(now);
-            if let Some(at) = self.redesign_settings_last_dirty_at
-                && now.saturating_duration_since(at)
-                    >= Duration::from_millis(REDESIGN_SETTINGS_DEBOUNCE_MS)
-            {
-                match self.redesign_settings_store.save(&self.redesign_settings) {
-                    Ok(()) => {
-                        self.redesign_settings_last_saved = self.redesign_settings.clone();
-                        self.redesign_settings_dirty = false;
-                        self.redesign_settings_last_dirty_at = None;
-                    }
-                    Err(err) => {
-                        warn!(
-                            target = "orchestrator",
-                            "redesign settings save failed: {err}"
-                        );
-                    }
-                }
-            }
-        }
-
         self.tick_bio_settings(now);
     }
 
@@ -1303,6 +1245,7 @@ impl OrchestratorApp {
         AppSettings {
             exe_fingerprint: self.exe_fingerprint.clone(),
             step1,
+            general: self.redesign_settings.clone(),
         }
     }
 
@@ -1340,16 +1283,6 @@ impl OrchestratorApp {
         );
         for err in errs {
             warn!(target = "orchestrator", "flush_all error: {err}");
-        }
-        if self.redesign_settings != self.redesign_settings_last_saved {
-            if let Err(err) = self.redesign_settings_store.save(&self.redesign_settings) {
-                warn!(
-                    target = "orchestrator",
-                    "redesign settings flush failed: {err}"
-                );
-            } else {
-                self.redesign_settings_last_saved = self.redesign_settings.clone();
-            }
         }
         let bio_snapshot = self.bio_settings_snapshot();
         if bio_snapshot != self.bio_settings_last_saved {
@@ -1611,10 +1544,6 @@ impl OrchestratorApp {
         app.registry_store =
             RegistryStore::new_with_path(dir.join(format!("{stem}_registry.json")));
         app.registry = ModlistRegistry::default();
-        app.redesign_settings_store =
-            crate::settings::redesign_store::RedesignSettingsStore::new_with_path(
-                dir.join(format!("{stem}_redesign_settings.json")),
-            );
         app.settings_store = crate::settings::store::SettingsStore::new_with_path(
             dir.join(format!("{stem}_settings.json")),
         );
@@ -1623,6 +1552,7 @@ impl OrchestratorApp {
         app.bio_settings_last_saved = AppSettings {
             exe_fingerprint: app.exe_fingerprint.clone(),
             step1: app.wizard_state.step1.clone().into(),
+            general: app.redesign_settings.clone(),
         };
         let config_root = dir.join(format!("{stem}_config"));
         crate::platform_defaults::set_config_dir_override(Some(config_root.clone()));
@@ -1738,22 +1668,19 @@ mod tests {
     #[test]
     fn isolated_test_app_flushes_settings_to_temp_not_the_config_dir() {
         let probe = format!("isolation-probe-{}", std::process::id());
-        let real_before = crate::settings::redesign_store::RedesignSettingsStore::new_default()
+        let real_before = SettingsStore::new_default()
             .load()
-            .map(|s| s.user_name)
+            .map(|s| s.general.user_name)
             .unwrap_or_default();
         let mut app = OrchestratorApp::new_isolated_for_test("isolationtest");
         app.redesign_settings.user_name.clone_from(&probe);
         app.flush_all_now();
-        let isolated = app
-            .redesign_settings_store
-            .load()
-            .expect("temp store loads");
-        assert_eq!(isolated.user_name, probe);
+        let isolated = app.settings_store.load().expect("temp store loads");
+        assert_eq!(isolated.general.user_name, probe);
         drop(app);
-        let real_after = crate::settings::redesign_store::RedesignSettingsStore::new_default()
+        let real_after = SettingsStore::new_default()
             .load()
-            .map(|s| s.user_name)
+            .map(|s| s.general.user_name)
             .unwrap_or_default();
         assert_eq!(real_after, real_before);
         assert_ne!(real_after, probe);

@@ -32,6 +32,43 @@ fn main() -> Result<()> {
     let cli = OrchestratorCli::parse();
     bio::logging::setup::init(&cli.log_level)?;
 
+    let settings_store = bio::settings::store::SettingsStore::new_default();
+    match bio::settings::migrate_general::fold_legacy_general_settings(&settings_store) {
+        bio::settings::migrate_general::LegacyGeneralOutcome::NoLegacyFile => {}
+        bio::settings::migrate_general::LegacyGeneralOutcome::Merged => {
+            tracing::info!(
+                target = "orchestrator",
+                "folded bio_redesign_settings.json into bio_settings.json"
+            );
+        }
+        bio::settings::migrate_general::LegacyGeneralOutcome::LegacyUnreadable(Some(backup)) => {
+            tracing::warn!(
+                target = "orchestrator",
+                "legacy general settings file unreadable, backed up to {}",
+                backup.display()
+            );
+        }
+        bio::settings::migrate_general::LegacyGeneralOutcome::LegacyUnreadable(None) => {
+            tracing::warn!(
+                target = "orchestrator",
+                "legacy general settings file unreadable and could not be moved aside; it stays in place"
+            );
+        }
+        bio::settings::migrate_general::LegacyGeneralOutcome::MergedFileUnreadable(backup) => {
+            tracing::warn!(
+                target = "orchestrator",
+                "bio_settings.json was unreadable during legacy general merge, backed up to {}",
+                backup.display()
+            );
+        }
+        bio::settings::migrate_general::LegacyGeneralOutcome::SaveFailed(err) => {
+            tracing::warn!(
+                target = "orchestrator",
+                "failed saving merged settings during legacy general migration: {err}"
+            );
+        }
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
