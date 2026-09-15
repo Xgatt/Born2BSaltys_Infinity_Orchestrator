@@ -9,10 +9,11 @@ use eframe::egui;
 use tracing::warn;
 
 use crate::install_runtime::{destination_prep, per_install_dirs};
-use crate::registry::model::Game;
-use crate::registry::operations::{
-    self, DestinationOwnership, classify_destination, remove_entry_keep_folder,
+use crate::registry::destination_claim::{
+    ClaimContext, DestinationClaim, resolve_destination_claim,
 };
+use crate::registry::model::Game;
+use crate::registry::operations::{self, remove_entry_keep_folder};
 use crate::registry::operations_create::create_modlist_with_author;
 use crate::registry::store_workspace::WorkspaceStore;
 use crate::registry::workspace_model::{ModlistWorkspaceState, ModsSource};
@@ -343,34 +344,41 @@ fn pending_create_matches_current(
 }
 
 fn scratch_take_over_if_needed(orchestrator: &mut OrchestratorApp, dest: &str) -> bool {
-    let ownership = classify_destination(dest, &orchestrator.registry);
-    let DestinationOwnership::ExactOwners(ids) = ownership else {
-        return true;
-    };
-    if ids.iter().any(|id| {
-        orchestrator
-            .active_install_modlist_id
-            .as_deref()
-            .is_some_and(|active| active == id.as_str())
-    }) {
-        warn!(
-            target = "orchestrator",
-            "Create scratch: take-over refused — destination owned by an actively-installing modlist"
-        );
-        return false;
-    }
-    for id in &ids {
-        if let Err(err) =
-            remove_entry_keep_folder(id, &orchestrator.registry_store, &mut orchestrator.registry)
-        {
+    let claim = resolve_destination_claim(
+        &orchestrator.registry,
+        &ClaimContext {
+            destination: dest,
+            held_id: None,
+            installing_id: orchestrator.active_install_modlist_id.as_deref(),
+        },
+    );
+    match claim {
+        DestinationClaim::Free | DestinationClaim::Adopt(_) => true,
+        DestinationClaim::Replace(ids) => {
+            for id in &ids {
+                if let Err(err) = remove_entry_keep_folder(
+                    id,
+                    &orchestrator.registry_store,
+                    &mut orchestrator.registry,
+                ) {
+                    warn!(
+                        target = "orchestrator",
+                        "Create scratch: take-over remove_entry_keep_folder({id}) failed: {err}"
+                    );
+                }
+            }
+            orchestrator.persistence_cycle.last_saved_registry = orchestrator.registry.clone();
+            true
+        }
+        DestinationClaim::Refused(refusal) => {
             warn!(
                 target = "orchestrator",
-                "Create scratch: take-over remove_entry_keep_folder({id}) failed: {err}"
+                "Create scratch: refused — {}",
+                refusal.message(&orchestrator.registry)
             );
+            false
         }
     }
-    orchestrator.persistence_cycle.last_saved_registry = orchestrator.registry.clone();
-    true
 }
 
 fn finish_start_scratch(orchestrator: &mut OrchestratorApp, name: &str, game: Game, dest: &str) {

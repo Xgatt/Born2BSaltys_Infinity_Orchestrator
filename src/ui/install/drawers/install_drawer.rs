@@ -4,6 +4,7 @@
 use eframe::egui;
 
 use crate::app::modlist_share::ModlistSharePreview;
+use crate::registry::destination_claim::DestinationClaim;
 use crate::registry::model::ModlistRegistry;
 use crate::ui::install::stage_review::{self, RightColumnCtx};
 use crate::ui::install::state_install::InstallScreenState;
@@ -24,6 +25,12 @@ fn drawer_copy(locked: bool, name: &str) -> (String, &'static str) {
     } else {
         (format!("Install {name}"), SUBTITLE)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DrawerIds<'a> {
+    pub(crate) pending_reinstall_id: Option<&'a str>,
+    pub(crate) installing_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,10 +74,15 @@ pub(crate) fn render(
     preview: &ModlistSharePreview,
     counts: &InsideCounts,
     registry: &ModlistRegistry,
-    pending_reinstall_id: Option<&str>,
+    ids: DrawerIds<'_>,
 ) -> InstallDrawerOutcome {
     stage_review::force_modify_for_availability(state, preview);
-    let checks = stage_review::destination_checks(&state.destination, registry);
+    let checks = stage_review::destination_checks(
+        &state.destination,
+        registry,
+        ids.pending_reinstall_id,
+        ids.installing_id,
+    );
     let locked = stage_review::reinstall_locked(state.review.origin);
     let name = stage_review::display_name(&state.review.name, preview);
     let (title, subtitle) = drawer_copy(locked, &name);
@@ -103,11 +115,11 @@ pub(crate) fn render(
                 state,
                 preview,
                 &RightColumnCtx {
-                    ownership_banner: stage_review::ownership_banner_visible(
-                        &checks.ownership,
-                        pending_reinstall_id,
+                    ownership_banner: matches!(
+                        checks.claim,
+                        DestinationClaim::Replace(_) | DestinationClaim::Refused(_)
                     )
-                    .then_some(&checks.ownership),
+                    .then_some(&checks.claim),
                     registry,
                     ownership_blocks: checks.ownership_blocks,
                     dest_non_empty: checks.dest_non_empty,

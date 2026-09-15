@@ -319,7 +319,7 @@ pub struct OrchestratorApp {
     pub(crate) pending_folder_deletes: Vec<PendingFolderDelete>,
 
     #[cfg(test)]
-    pub(crate) isolated_test_workspace_root: Option<std::path::PathBuf>,
+    pub(crate) isolated_test_config_root: Option<std::path::PathBuf>,
 }
 
 fn load_registry(registry_store: &RegistryStore) -> RegistryLoad {
@@ -482,7 +482,7 @@ impl OrchestratorApp {
             hash_progress: Arc::new(std::sync::Mutex::new(None)),
             pending_folder_deletes: Vec::new(),
             #[cfg(test)]
-            isolated_test_workspace_root: None,
+            isolated_test_config_root: None,
         };
 
         if app.redesign_settings.validate_paths_on_startup {
@@ -1625,16 +1625,16 @@ impl OrchestratorApp {
             exe_fingerprint: app.exe_fingerprint.clone(),
             step1: app.wizard_state.step1.clone().into(),
         };
-        let workspace_root = dir.join(format!("{stem}_ws"));
-        crate::registry::store_workspace::set_modlist_data_root(Some(workspace_root.clone()));
-        app.isolated_test_workspace_root = Some(workspace_root);
+        let config_root = dir.join(format!("{stem}_config"));
+        crate::platform_defaults::set_config_dir_override(Some(config_root.clone()));
+        app.isolated_test_config_root = Some(config_root);
         app
     }
 
-    fn cleanup_isolated_test_workspace_root(&mut self) {
-        if let Some(root) = self.isolated_test_workspace_root.take() {
+    fn cleanup_isolated_test_config_root(&mut self) {
+        if let Some(root) = self.isolated_test_config_root.take() {
             let _ = std::fs::remove_dir_all(&root);
-            crate::registry::store_workspace::clear_modlist_data_root_if(&root);
+            crate::platform_defaults::clear_config_dir_override_if(&root);
         }
     }
 }
@@ -1644,7 +1644,7 @@ impl Drop for OrchestratorApp {
         self.join_all_destination_prep_workers();
         self.flush_all_now();
         #[cfg(test)]
-        self.cleanup_isolated_test_workspace_root();
+        self.cleanup_isolated_test_config_root();
     }
 }
 
@@ -1751,6 +1751,7 @@ mod tests {
             .load()
             .expect("temp store loads");
         assert_eq!(isolated.user_name, probe);
+        drop(app);
         let real_after = crate::settings::redesign_store::RedesignSettingsStore::new_default()
             .load()
             .map(|s| s.user_name)
@@ -1774,12 +1775,12 @@ mod tests {
     }
 
     #[test]
-    fn dropping_an_isolated_app_clears_its_workspace_root() {
+    fn dropping_an_isolated_app_clears_its_config_root() {
         let app = OrchestratorApp::new_isolated_for_test("root-clear");
         let root = app
-            .isolated_test_workspace_root
+            .isolated_test_config_root
             .clone()
-            .expect("isolated app carries a workspace root");
+            .expect("isolated app carries a config root");
         assert!(
             crate::registry::store_workspace::modlist_data_dir("X").starts_with(&root),
             "the root is active while the app is alive"

@@ -5,8 +5,10 @@ use eframe::egui;
 
 use crate::app::compat_dlc_source::{SourceNotice, SourceNoticeSeverity, SourceRemedy};
 use crate::app::modlist_share::ModlistSharePreview;
+use crate::registry::destination_claim::{
+    ClaimContext, DestinationClaim, resolve_destination_claim,
+};
 use crate::registry::model::ModlistRegistry;
-use crate::registry::operations::{DestinationOwnership, classify_destination};
 use crate::ui::install::state_install::{DestChoice, InstallScreenState, ReviewOrigin};
 use crate::ui::install::{destination_field, destination_not_empty, destination_owned};
 use crate::ui::orchestrator::widgets::{
@@ -80,20 +82,6 @@ pub(crate) struct BeginGuards<'a> {
 }
 
 #[must_use]
-pub(crate) fn ownership_banner_visible(
-    classification: &DestinationOwnership,
-    pending_reinstall_id: Option<&str>,
-) -> bool {
-    match classification {
-        DestinationOwnership::Free => false,
-        DestinationOwnership::ExactOwners(ids) => {
-            pending_reinstall_id.is_none_or(|reinstall_id| !ids.iter().any(|id| id == reinstall_id))
-        }
-        DestinationOwnership::InsideOwner(_) | DestinationOwnership::ContainsOwners(_) => true,
-    }
-}
-
-#[must_use]
 pub(crate) fn begin_disabled(guards: &BeginGuards<'_>) -> bool {
     guards.name.trim().is_empty()
         || !guards.destination_valid
@@ -103,7 +91,7 @@ pub(crate) fn begin_disabled(guards: &BeginGuards<'_>) -> bool {
 }
 
 pub(crate) struct DestinationChecks {
-    pub(crate) ownership: DestinationOwnership,
+    pub(crate) claim: DestinationClaim,
     pub(crate) ownership_blocks: bool,
     pub(crate) dest_valid: bool,
     pub(crate) dest_non_empty: bool,
@@ -113,16 +101,22 @@ pub(crate) struct DestinationChecks {
 pub(crate) fn destination_checks(
     destination: &str,
     registry: &ModlistRegistry,
+    held_id: Option<&str>,
+    installing_id: Option<&str>,
 ) -> DestinationChecks {
-    let ownership = classify_destination(destination, registry);
-    let ownership_blocks = matches!(
-        &ownership,
-        DestinationOwnership::InsideOwner(_) | DestinationOwnership::ContainsOwners(_)
+    let claim = resolve_destination_claim(
+        registry,
+        &ClaimContext {
+            destination,
+            held_id,
+            installing_id,
+        },
     );
+    let ownership_blocks = claim.blocks();
     let dest_valid = destination_is_valid(destination);
     let dest_non_empty = destination_is_non_empty(destination);
     DestinationChecks {
-        ownership,
+        claim,
         ownership_blocks,
         dest_valid,
         dest_non_empty,
@@ -171,7 +165,7 @@ pub(crate) const fn force_modify_for_availability(
 }
 
 pub(crate) struct RightColumnCtx<'a> {
-    pub(crate) ownership_banner: Option<&'a DestinationOwnership>,
+    pub(crate) ownership_banner: Option<&'a DestinationClaim>,
     pub(crate) registry: &'a ModlistRegistry,
     pub(crate) ownership_blocks: bool,
     pub(crate) dest_non_empty: bool,
@@ -646,7 +640,7 @@ mod tests {
     #[test]
     fn source_issue_blocks_direct_install_but_allows_modify() {
         let checks = DestinationChecks {
-            ownership: DestinationOwnership::Free,
+            claim: DestinationClaim::Free,
             ownership_blocks: false,
             dest_valid: true,
             dest_non_empty: false,
@@ -678,7 +672,7 @@ mod tests {
     #[test]
     fn residue_notice_never_blocks_begin() {
         let checks = DestinationChecks {
-            ownership: DestinationOwnership::Free,
+            claim: DestinationClaim::Free,
             ownership_blocks: false,
             dest_valid: true,
             dest_non_empty: false,
@@ -703,7 +697,7 @@ mod tests {
     #[test]
     fn unresolved_sources_notice_never_blocks_begin() {
         let checks = DestinationChecks {
-            ownership: DestinationOwnership::Free,
+            claim: DestinationClaim::Free,
             ownership_blocks: false,
             dest_valid: true,
             dest_non_empty: false,
@@ -866,51 +860,48 @@ mod tests {
         assert_eq!(MODIFY_YES, "Yes, review and modify");
     }
 
-    #[test]
-    fn ownership_banner_hidden_for_free() {
-        assert!(!ownership_banner_visible(&DestinationOwnership::Free, None));
-        assert!(!ownership_banner_visible(
-            &DestinationOwnership::Free,
-            Some("REINSTALL0001")
-        ));
+    fn reg_with(id: &str, name: &str, dest: &str) -> ModlistRegistry {
+        use crate::registry::model::{Game, ModlistEntry, ModlistState};
+        let mut r = ModlistRegistry::default();
+        r.entries.push(ModlistEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            game: Game::EET,
+            destination_folder: dest.to_string(),
+            state: ModlistState::InProgress,
+            ..Default::default()
+        });
+        r
     }
 
     #[test]
-    fn ownership_banner_hidden_when_reinstalling_the_exact_owner() {
-        let classification = DestinationOwnership::ExactOwners(vec!["REINSTALL0001".to_string()]);
-        assert!(!ownership_banner_visible(
-            &classification,
-            Some("REINSTALL0001")
-        ));
+    fn checks_adopt_reinstalled_list_without_banner() {
+        let reg = reg_with("REINSTALL0001", "Tactical EET", "D:\\dest");
+        let checks = destination_checks("D:\\dest", &reg, Some("REINSTALL0001"), None);
+        assert_eq!(
+            checks.claim,
+            DestinationClaim::Adopt("REINSTALL0001".to_string())
+        );
+        assert!(!checks.ownership_blocks);
     }
 
     #[test]
-    fn ownership_banner_shown_for_exact_owner_that_is_not_the_reinstall() {
-        let classification = DestinationOwnership::ExactOwners(vec!["OTHER0000001".to_string()]);
-        assert!(ownership_banner_visible(
-            &classification,
-            Some("REINSTALL0001")
-        ));
-        assert!(ownership_banner_visible(&classification, None));
+    fn checks_replace_shows_banner_and_allows_begin() {
+        let reg = reg_with("OTHER0000001", "Other List", "D:\\dest");
+        let checks = destination_checks("D:\\dest", &reg, None, None);
+        assert_eq!(
+            checks.claim,
+            DestinationClaim::Replace(vec!["OTHER0000001".to_string()])
+        );
+        assert!(!checks.ownership_blocks);
     }
 
     #[test]
-    fn ownership_banner_shown_for_inside_owner_even_when_reinstalling() {
-        let classification = DestinationOwnership::InsideOwner("REINSTALL0001".to_string());
-        assert!(ownership_banner_visible(
-            &classification,
-            Some("REINSTALL0001")
-        ));
-    }
-
-    #[test]
-    fn ownership_banner_shown_for_contains_owners_even_when_reinstalling() {
-        let classification =
-            DestinationOwnership::ContainsOwners(vec!["REINSTALL0001".to_string()]);
-        assert!(ownership_banner_visible(
-            &classification,
-            Some("REINSTALL0001")
-        ));
+    fn checks_refused_blocks_begin() {
+        let reg = reg_with("BUSY0000001", "Busy List", "D:\\dest");
+        let checks = destination_checks("D:\\dest", &reg, None, Some("BUSY0000001"));
+        assert!(checks.ownership_blocks);
+        assert!(matches!(checks.claim, DestinationClaim::Refused(_)));
     }
 
     #[test]
@@ -1011,7 +1002,7 @@ mod tests {
     #[test]
     fn begin_disabled_for_mirrors_begin_disabled() {
         let good_checks = DestinationChecks {
-            ownership: DestinationOwnership::Free,
+            claim: DestinationClaim::Free,
             ownership_blocks: false,
             dest_valid: true,
             dest_non_empty: false,
@@ -1027,7 +1018,7 @@ mod tests {
         assert!(!begin_disabled_for(&good_state, &good_checks));
 
         let blocked_checks = DestinationChecks {
-            ownership: DestinationOwnership::Free,
+            claim: DestinationClaim::Free,
             ownership_blocks: true,
             dest_valid: true,
             dest_non_empty: false,

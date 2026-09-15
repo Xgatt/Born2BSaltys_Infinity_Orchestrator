@@ -36,7 +36,7 @@ pub(crate) fn render(
     palette: ThemePalette,
     state: &mut InstallScreenState,
     registry: &ModlistRegistry,
-    pending_reinstall_id: Option<&str>,
+    ids: install_drawer::DrawerIds<'_>,
 ) -> DrawerOutcome {
     let Some(kind) = state.drawer.open else {
         return DrawerOutcome::Stay;
@@ -97,15 +97,7 @@ pub(crate) fn render(
             &counts,
         ),
         DrawerKind::Install => {
-            match install_drawer::render(
-                ctx,
-                palette,
-                state,
-                &preview,
-                &counts,
-                registry,
-                pending_reinstall_id,
-            ) {
+            match install_drawer::render(ctx, palette, state, &preview, &counts, registry, ids) {
                 install_drawer::InstallDrawerOutcome::Stay => DrawerOutcome::Stay,
                 install_drawer::InstallDrawerOutcome::Close => {
                     state.drawer.open = None;
