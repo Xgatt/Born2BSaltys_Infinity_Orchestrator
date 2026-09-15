@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::platform_defaults::{default_mod_installer_binary, default_weidu_binary};
+use crate::settings::redesign_fields::RedesignSettings;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -160,6 +161,7 @@ impl Step1Settings {
 pub struct AppSettings {
     pub exe_fingerprint: String,
     pub step1: Step1Settings,
+    pub general: RedesignSettings,
 }
 
 #[cfg(test)]
@@ -218,5 +220,27 @@ mod tests {
             ..Step1Settings::default()
         };
         assert_eq!(s.effective_global_mods_folder(), r"C:\old\mods");
+    }
+
+    #[test]
+    fn app_settings_without_general_block_uses_general_defaults() {
+        let json = r#"{"exe_fingerprint":"x","step1":{}}"#;
+        let s: AppSettings = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(s.general, RedesignSettings::default());
+    }
+
+    #[test]
+    fn app_settings_round_trips_general() {
+        let s = AppSettings {
+            general: RedesignSettings {
+                user_name: "@me".to_string(),
+                theme_palette: crate::settings::redesign_fields::ThemeChoice::Light,
+                ..RedesignSettings::default()
+            },
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        let s2: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(s2, s);
     }
 }

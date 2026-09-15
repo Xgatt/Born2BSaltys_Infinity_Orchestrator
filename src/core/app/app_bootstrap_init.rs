@@ -5,6 +5,7 @@ use crate::app::controller::step3_sync::scrub_dev_settings;
 use crate::app::controller::util::current_exe_fingerprint;
 use crate::app::state::Step1State;
 use crate::settings::model::AppSettings;
+use crate::settings::redesign_fields::RedesignSettings;
 use crate::settings::store::SettingsStore;
 use tracing::warn;
 
@@ -12,6 +13,7 @@ pub(crate) struct AppBootstrap {
     pub(crate) settings_store: SettingsStore,
     pub(crate) exe_fingerprint: String,
     pub(crate) step1: Step1State,
+    pub(crate) general: RedesignSettings,
     pub(crate) github_auth_login: String,
 }
 
@@ -32,6 +34,7 @@ pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
         warn!(target = "orchestrator", "settings load failed: {err}");
         AppSettings::default()
     });
+    let general = loaded.general;
     let mut step1 = Step1State::from(loaded.step1);
     if step1.global_mods_folder.trim().is_empty() && !step1.mods_folder.trim().is_empty() {
         step1.global_mods_folder.clone_from(&step1.mods_folder);
@@ -52,6 +55,7 @@ pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
         settings_store,
         exe_fingerprint,
         step1,
+        general,
         github_auth_login,
     }
 }
