@@ -39,7 +39,10 @@ pub fn paint(ui: &egui::Ui, palette: ThemePalette, game: Game, rect: egui::Rect)
     paint_gradient(ui, game, rect);
     paint_watermark(ui, rect);
     paint_game_label(ui, game, rect);
+    paint_border(ui, palette, rect);
+}
 
+fn paint_border(ui: &egui::Ui, palette: ThemePalette, rect: egui::Rect) {
     ui.painter().rect_stroke(
         rect,
         egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8),
@@ -118,6 +121,50 @@ fn paint_watermark(ui: &egui::Ui, rect: egui::Rect) {
         .paint_at(ui, mark_rect);
 }
 
+pub(crate) fn paint_cover(
+    ui: &egui::Ui,
+    palette: ThemePalette,
+    game: Game,
+    entry_id: &str,
+    png: &[u8],
+    rect: egui::Rect,
+) {
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+
+    let cache_id = egui::Id::new(("gallery_cover", entry_id, png.len()));
+    let cached: Option<egui::TextureHandle> = ui.ctx().memory(|m| m.data.get_temp(cache_id));
+    let texture = if let Some(tex) = cached {
+        tex
+    } else {
+        let Ok(decoded) = image::load_from_memory(png) else {
+            paint(ui, palette, game, rect);
+            return;
+        };
+        let rgba = decoded.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            rgba.as_raw(),
+        );
+        let tex = ui.ctx().load_texture(
+            format!("gallery-cover-{entry_id}"),
+            image,
+            egui::TextureOptions::LINEAR,
+        );
+        ui.ctx()
+            .memory_mut(|m| m.data.insert_temp(cache_id, tex.clone()));
+        tex
+    };
+
+    egui::Image::from_texture(&texture)
+        .corner_radius(REDESIGN_BORDER_RADIUS_U8)
+        .paint_at(ui, rect);
+    paint_game_label(ui, game, rect);
+    paint_border(ui, palette, rect);
+}
+
 fn paint_game_label(ui: &egui::Ui, game: Game, rect: egui::Rect) {
     ui.painter().text(
         egui::pos2(rect.left() + 12.0, rect.bottom() - 10.0),
@@ -157,5 +204,57 @@ mod tests {
     fn strip_count_constant_matches_the_loop_bound() {
         assert!((STRIP_COUNT_F - 32.0).abs() < f32::EPSILON);
         assert_eq!(GRADIENT_STRIPS, 32);
+    }
+
+    fn cover_png(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbaImage::new(width, height);
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut buffer, image::ImageFormat::Png)
+            .expect("encode png");
+        buffer.into_inner()
+    }
+
+    #[test]
+    fn cover_texture_is_cached_after_the_first_paint() {
+        let ctx = egui::Context::default();
+        crate::ui::shared::redesign_fonts::install_redesign_fonts(&ctx);
+        let png = cover_png(460, 215);
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(460.0, 215.0));
+        let cache_id = egui::Id::new(("gallery_cover", "entry-under-test", png.len()));
+
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                paint_cover(
+                    ui,
+                    ThemePalette::Dark,
+                    Game::BGEE,
+                    "entry-under-test",
+                    &png,
+                    rect,
+                );
+            });
+        });
+        assert!(
+            ctx.memory(|m| m.data.get_temp::<egui::TextureHandle>(cache_id).is_some()),
+            "first paint must load and cache the texture"
+        );
+
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                paint_cover(
+                    ui,
+                    ThemePalette::Dark,
+                    Game::BGEE,
+                    "entry-under-test",
+                    &png,
+                    rect,
+                );
+            });
+        });
+        assert!(
+            ctx.memory(|m| m.data.get_temp::<egui::TextureHandle>(cache_id).is_some()),
+            "second paint must reuse the cached texture"
+        );
     }
 }

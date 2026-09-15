@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
+use std::sync::Arc;
+use std::sync::mpsc::TryRecvError;
+
 use eframe::egui;
 use tracing::warn;
 
 use crate::app::modlist_share::preview_modlist_share_code;
+use crate::gallery_feed::fetch::{FetchOutcome, start_fetch};
+use crate::gallery_feed::index::FeedEntry;
 use crate::install_runtime::fork_pipeline_arm::{self, ForkArmRequest};
 use crate::install_runtime::{fork_route, start_hooks};
 use crate::registry::share_export;
 use crate::ui::install::drawers;
-use crate::ui::install::gallery::catalog::{self, GalleryEntry};
 use crate::ui::install::stage_details::{self, DetailsHeader, DetailsOutcome};
 use crate::ui::install::stage_downloading::{self, DownloadScreenCopy, DownloadingOutcome};
 use crate::ui::install::stage_fork_download::{self, ForkDownloadOutcome};
@@ -18,7 +22,8 @@ use crate::ui::install::stage_installing::{self, StageInstallingOutcome};
 use crate::ui::install::stage_paste::{self, PasteOutcome};
 use crate::ui::install::stage_review;
 use crate::ui::install::state_install::{
-    DrawerKind, DrawerState, InstallScreenState, InstallStage, PipelineKind, ReviewOrigin,
+    DrawerKind, DrawerState, FeedFetch, InstallScreenState, InstallStage, PipelineKind,
+    ReviewOrigin,
 };
 use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
@@ -33,6 +38,8 @@ pub(crate) enum InstallRequest {
 
 pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui::Context) {
     let palette = orchestrator.theme_palette;
+
+    poll_feed(&mut orchestrator.install_screen_state, ctx);
 
     let request = match orchestrator.install_screen_state.stage {
         InstallStage::Gallery => gallery_stage(
@@ -66,6 +73,48 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
     }
 }
 
+const FEED_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+fn poll_feed(state: &mut InstallScreenState, ctx: &egui::Context) {
+    let is_gallery = state.stage == InstallStage::Gallery;
+    match std::mem::replace(&mut state.gallery.fetch, FeedFetch::Applied) {
+        FeedFetch::NotStarted => {
+            state.gallery.fetch =
+                FeedFetch::Running(start_fetch(state.gallery.cached_etag.clone()));
+        }
+        FeedFetch::Running(rx) => match rx.try_recv() {
+            Ok(FetchOutcome::Fresh(list)) => {
+                if is_gallery {
+                    state.gallery.entries = Arc::new(list);
+                    state.gallery.fetch = FeedFetch::Applied;
+                } else {
+                    state.gallery.fetch = FeedFetch::Pending(Arc::new(list));
+                }
+            }
+            Ok(FetchOutcome::Failed(err)) => {
+                tracing::debug!(target = "orchestrator", "gallery feed fetch failed: {err}");
+                state.gallery.fetch = FeedFetch::Applied;
+            }
+            Ok(FetchOutcome::NotModified) | Err(TryRecvError::Disconnected) => {
+                state.gallery.fetch = FeedFetch::Applied;
+            }
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(FEED_POLL_INTERVAL);
+                state.gallery.fetch = FeedFetch::Running(rx);
+            }
+        },
+        FeedFetch::Pending(list) => {
+            if is_gallery {
+                state.gallery.entries = list;
+                state.gallery.fetch = FeedFetch::Applied;
+            } else {
+                state.gallery.fetch = FeedFetch::Pending(list);
+            }
+        }
+        other => state.gallery.fetch = other,
+    }
+}
+
 fn gallery_stage(
     ui: &mut egui::Ui,
     palette: ThemePalette,
@@ -76,10 +125,10 @@ fn gallery_stage(
     match stage_gallery::render(ui, palette, state) {
         GalleryOutcome::OpenPaste => Some(open_paste_from_gallery(state)),
         GalleryOutcome::OpenFile => open_file_from_gallery(state, step1, notification_manager),
-        GalleryOutcome::OpenDetails(index) => {
-            state.gallery.selected = Some(index);
-            let entry = selected_entry(state)?;
-            open_details_from_gallery_entry(entry, state, step1, notification_manager)
+        GalleryOutcome::OpenDetails(id) => {
+            state.gallery.selected = Some(id);
+            let entry = selected_entry(state)?.clone();
+            open_details_from_gallery_entry(&entry, state, step1, notification_manager)
         }
         GalleryOutcome::Stay => None,
     }
@@ -446,45 +495,28 @@ fn console_back_request(
     }
 }
 
-fn selected_entry(state: &InstallScreenState) -> Option<&'static GalleryEntry> {
-    state
-        .gallery
-        .selected
-        .and_then(|index| catalog::entries().get(index))
+fn selected_entry(state: &InstallScreenState) -> Option<&FeedEntry> {
+    let id = state.gallery.selected.as_deref()?;
+    state.gallery.entries.iter().find(|entry| entry.id == id)
 }
 
 fn open_details_from_gallery_entry(
-    entry: &GalleryEntry,
+    entry: &FeedEntry,
     state: &mut InstallScreenState,
     step1: &crate::app::state::Step1State,
     notification_manager: &mut NotificationManager,
 ) -> Option<InstallRequest> {
-    match catalog::share_code(entry) {
-        Ok(code) => {
-            state.import_code = code;
-            run_preview_parse(state, step1);
-            if let Some(err) = state.preview_parse_error.clone() {
-                notification_manager.error(format!("Could not open \"{}\": {err}", entry.name));
-                state.gallery.selected = None;
-                return None;
-            }
-            state.review.origin = ReviewOrigin::Details;
-            state.review.name = entry.name.to_string();
-            state.review.modify = false;
-            Some(InstallRequest::Stage(InstallStage::Details))
-        }
-        Err(err) => {
-            warn!(
-                target = "orchestrator",
-                "Gallery: share code for {} could not be generated: {err}", entry.id
-            );
-            state.clear_preview();
-            state.preview_parse_error = Some(err.clone());
-            state.gallery.selected = None;
-            notification_manager.error(format!("Could not open \"{}\": {err}", entry.name));
-            None
-        }
+    state.import_code.clone_from(&entry.code);
+    run_preview_parse(state, step1);
+    if let Some(err) = state.preview_parse_error.clone() {
+        notification_manager.error(format!("Could not open \"{}\": {err}", entry.name));
+        state.gallery.selected = None;
+        return None;
     }
+    state.review.origin = ReviewOrigin::Details;
+    state.review.name.clone_from(&entry.name);
+    state.review.modify = false;
+    Some(InstallRequest::Stage(InstallStage::Details))
 }
 
 fn run_preview_parse(state: &mut InstallScreenState, step1: &crate::app::state::Step1State) {
@@ -521,6 +553,7 @@ pub(crate) fn refresh_source_compat_issue(
 mod tests {
 
     use super::*;
+    use crate::ui::install::gallery::catalog;
 
     fn orch_for_install_test() -> OrchestratorApp {
         OrchestratorApp::new_isolated_for_test("pageinstalltest")
@@ -531,7 +564,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut app = orch_for_install_test();
@@ -671,7 +704,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
         let original_name = preview.name.clone();
 
@@ -700,7 +733,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut app = orch_for_install_test();
@@ -838,7 +871,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut state = InstallScreenState {
@@ -846,7 +879,7 @@ mod tests {
             parsed_preview: Some(preview),
             ..Default::default()
         };
-        state.gallery.selected = Some(0);
+        state.gallery.selected = Some(entry.id.clone());
         let mut pending_reinstall_id = None;
 
         let request = details_back(&mut state, &mut pending_reinstall_id);
@@ -862,7 +895,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut state = InstallScreenState {
@@ -946,7 +979,7 @@ mod tests {
             ..Default::default()
         };
         state.review.origin = ReviewOrigin::File;
-        state.gallery.selected = Some(0);
+        state.gallery.selected = Some("some-gallery-id".to_string());
         let mut pending_reinstall_id = None;
 
         let request = details_back(&mut state, &mut pending_reinstall_id);
@@ -962,7 +995,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut state = InstallScreenState {
@@ -985,7 +1018,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut state = InstallScreenState {
@@ -993,7 +1026,7 @@ mod tests {
             parsed_preview: Some(preview),
             ..Default::default()
         };
-        state.gallery.selected = Some(0);
+        state.gallery.selected = Some(entry.id.clone());
         let mut pending_reinstall_id = None;
 
         details_back(&mut state, &mut pending_reinstall_id);
@@ -1011,7 +1044,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut app = orch_for_install_test();
@@ -1101,7 +1134,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
+        let code = entry.code.clone();
         let preview = preview_modlist_share_code(&code).expect("stub code parses");
 
         let mut app = OrchestratorApp::new_isolated_for_test("auto_start_rearm");
@@ -1131,5 +1164,49 @@ mod tests {
         after_included_mods(&IncludedModsOutcome::Install, &mut drawer);
 
         assert_eq!(drawer.open, Some(DrawerKind::Install));
+    }
+
+    #[test]
+    fn feed_fetch_stays_disabled_in_the_isolated_app() {
+        let mut app = orch_for_install_test();
+
+        assert!(matches!(
+            app.install_screen_state.gallery.fetch,
+            FeedFetch::Disabled
+        ));
+        assert_eq!(
+            app.install_screen_state.gallery.entries.as_slice(),
+            catalog::entries()
+        );
+
+        poll_feed(&mut app.install_screen_state, &egui::Context::default());
+
+        assert!(matches!(
+            app.install_screen_state.gallery.fetch,
+            FeedFetch::Disabled
+        ));
+    }
+
+    #[test]
+    fn a_fresh_fetch_result_is_held_while_details_is_showing() {
+        let mut state = InstallScreenState::default();
+        let held = std::sync::Arc::new(vec![
+            catalog::entries()
+                .first()
+                .expect("the catalog is not empty")
+                .clone(),
+        ]);
+        state.gallery.fetch = FeedFetch::Pending(held.clone());
+        state.stage = InstallStage::Details;
+
+        poll_feed(&mut state, &egui::Context::default());
+
+        assert!(matches!(state.gallery.fetch, FeedFetch::Pending(_)));
+
+        state.stage = InstallStage::Gallery;
+        poll_feed(&mut state, &egui::Context::default());
+
+        assert_eq!(state.gallery.entries, held);
+        assert!(matches!(state.gallery.fetch, FeedFetch::Applied));
     }
 }

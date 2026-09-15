@@ -1184,6 +1184,69 @@ pub(crate) fn base64url_decode(text: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+pub(crate) fn base64_standard_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+pub(crate) fn base64_standard_decode(text: &str) -> Result<Vec<u8>, String> {
+    let mut values = Vec::new();
+    for ch in text.chars().filter(|ch| !ch.is_whitespace()) {
+        match ch {
+            'A'..='Z' => values.push(ch as u8 - b'A'),
+            'a'..='z' => values.push(ch as u8 - b'a' + 26),
+            '0'..='9' => values.push(ch as u8 - b'0' + 52),
+            '+' => values.push(62),
+            '/' => values.push(63),
+            '=' => values.push(64),
+            _ => return Err("Cover image contains invalid base64 characters.".to_string()),
+        }
+    }
+    if values.is_empty() || values.len() % 4 != 0 {
+        return Err("Cover image base64 length is invalid.".to_string());
+    }
+    let mut out = Vec::with_capacity(values.len() / 4 * 3);
+    for chunk in values.chunks(4) {
+        let pad = usize::from(chunk[0] == 64)
+            + usize::from(chunk[1] == 64)
+            + usize::from(chunk[2] == 64)
+            + usize::from(chunk[3] == 64);
+        if pad > 2 || chunk[..4 - pad].contains(&64) {
+            return Err("Cover image base64 padding is invalid.".to_string());
+        }
+        let c0 = chunk[0];
+        let c1 = chunk[1];
+        let c2 = if chunk[2] == 64 { 0 } else { chunk[2] };
+        let c3 = if chunk[3] == 64 { 0 } else { chunk[3] };
+        out.push((c0 << 2) | (c1 >> 4));
+        if pad < 2 {
+            out.push(((c1 & 0b0000_1111) << 4) | (c2 >> 2));
+        }
+        if pad == 0 {
+            out.push(((c2 & 0b0000_0011) << 6) | c3);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1960,6 +2023,34 @@ mod tests {
         assert_eq!(
             ShareExportSources::default().log_source,
             ExportLogSource::Rebuilt
+        );
+    }
+
+    #[test]
+    fn base64_standard_round_trips_every_tail_length() {
+        for input in [&b"f"[..], b"fo", b"foo", b"foob", b"fooba", b"foobar"] {
+            let encoded = base64_standard_encode(input);
+            assert_eq!(encoded.len() % 4, 0);
+            assert_eq!(base64_standard_decode(&encoded).unwrap(), input);
+        }
+        assert_eq!(base64_standard_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_standard_encode(b"fooba"), "Zm9vYmE=");
+    }
+
+    #[test]
+    fn base64_standard_decode_rejects_bad_padding_and_characters() {
+        assert!(base64_standard_decode("AB=C").is_err());
+        assert!(base64_standard_decode("A!==").is_err());
+        assert!(base64_standard_decode("ABC").is_err());
+        assert!(base64_standard_decode("").is_err());
+        assert_eq!(
+            base64_standard_decode(
+                "Zm9v
+YmFy
+"
+            )
+            .unwrap(),
+            b"foobar"
         );
     }
 }

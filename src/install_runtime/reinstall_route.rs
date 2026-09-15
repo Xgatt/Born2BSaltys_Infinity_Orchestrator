@@ -77,7 +77,7 @@ mod tests {
         let stub = crate::ui::install::gallery::catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = crate::ui::install::gallery::catalog::share_code(stub).expect("stub code");
+        let code = stub.code.clone();
         ModlistEntry {
             id: "REINSTALL0001".to_string(),
             name: "Polished EET".to_string(),
@@ -129,28 +129,9 @@ mod tests {
 
     #[test]
     fn reinstall_stores_the_dlc_issue_when_the_source_holds_the_archive() {
-        use crate::ui::install::gallery::catalog::{GalleryEntry, GalleryMod, share_code};
+        use crate::app::modlist_share::encode_share_payload_text;
 
-        const TWEAKS_ONLY: GalleryEntry = GalleryEntry {
-            id: "tweaks-only",
-            name: "Tweaks only",
-            author: "Test",
-            game: Game::BGEE,
-            tags: &[],
-            starter: false,
-            sample: false,
-            description: "",
-            requirements: "",
-            version: "1.0.0",
-            mods: &[GalleryMod {
-                mod_name: "CDTweaks",
-                tp_file: "SETUP-CDTWEAKS.TP2",
-                component_id: "2010",
-                component_label: "Increase Ammo Stacking",
-                target: Game::BGEE,
-                wlb_inputs: None,
-            }],
-            payload: r#"{
+        let payload_text = r#"{
   "format_version": 1,
   "bio_version": "0.3.0-alpha",
   "game_install": "BGEE",
@@ -173,8 +154,9 @@ mod tests {
   "author": "Test",
   "archive_meta": []
 }
-"#,
-        };
+"#;
+        let tweaks_only_code =
+            encode_share_payload_text(payload_text).expect("encode tweaks-only payload");
 
         let source =
             std::env::temp_dir().join(format!("bio-reinstall-source-{}", std::process::id()));
@@ -189,7 +171,7 @@ mod tests {
         ));
         let modlist = ModlistEntry {
             game: Game::BGEE,
-            latest_share_code: Some(share_code(&TWEAKS_ONLY).expect("tweaks-only code")),
+            latest_share_code: Some(tweaks_only_code),
             ..entry()
         };
 

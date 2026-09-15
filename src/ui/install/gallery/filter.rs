@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
+use crate::gallery_feed::index::FeedEntry;
 use crate::registry::model::Game;
-use crate::ui::install::gallery::catalog::GalleryEntry;
 
 pub const MIN_CARD_WIDTH_PX: f32 = 300.0;
 pub const CARD_GAP_PX: f32 = 20.0;
@@ -12,13 +12,13 @@ const MAX_COLUMNS: usize = 4;
 pub struct GalleryFilter {
     pub search: String,
     pub game: Option<Game>,
-    pub starter_only: bool,
+    pub featured_only: bool,
 }
 
 impl GalleryFilter {
     #[must_use]
-    pub fn matches(&self, entry: &GalleryEntry) -> bool {
-        if self.starter_only && !entry.starter {
+    pub fn matches(&self, entry: &FeedEntry) -> bool {
+        if self.featured_only && !entry.featured {
             return false;
         }
         if let Some(game) = self.game
@@ -63,111 +63,144 @@ pub fn column_count(available_width: f32) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::install::gallery::catalog;
 
-    fn entry(name: &str) -> &'static GalleryEntry {
-        catalog::entries()
+    fn entry(id: &str, name: &str, game: Game, featured: bool, tags: &[&str]) -> FeedEntry {
+        FeedEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            author: "BIO Team".to_string(),
+            description: String::new(),
+            tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+            game,
+            featured,
+            version: "1.0.0".to_string(),
+            requirements: String::new(),
+            code: String::new(),
+            cover_png: None,
+        }
+    }
+
+    fn fixture() -> Vec<FeedEntry> {
+        vec![
+            entry(
+                "eet-essentials",
+                "EET Essentials",
+                Game::EET,
+                true,
+                &["Starter", "Vanilla+"],
+            ),
+            entry(
+                "eet-plus-fixes",
+                "EET + Fixes",
+                Game::EET,
+                true,
+                &["Starter", "Fixes"],
+            ),
+            entry(
+                "iwdee-essentials",
+                "Icewind Dale Essentials",
+                Game::IWDEE,
+                true,
+                &["Starter"],
+            ),
+            entry(
+                "bgee-vanilla-plus",
+                "BGEE Vanilla+ (with DLC)",
+                Game::BGEE,
+                false,
+                &["Vanilla+"],
+            ),
+            entry(
+                "bgee-vanilla-plus-no-dlc",
+                "BGEE Vanilla+ (no DLC)",
+                Game::BGEE,
+                false,
+                &["Vanilla+"],
+            ),
+        ]
+    }
+
+    fn find<'a>(entries: &'a [FeedEntry], name: &str) -> &'a FeedEntry {
+        entries
             .iter()
             .find(|e| e.name == name)
-            .expect("entry is in the catalog")
+            .expect("entry is in the fixture")
     }
 
     #[test]
     fn empty_filter_matches_everything() {
+        let entries = fixture();
         let filter = GalleryFilter::default();
         assert_eq!(
-            catalog::entries()
-                .iter()
-                .filter(|e| filter.matches(e))
-                .count(),
-            catalog::entries().len()
+            entries.iter().filter(|e| filter.matches(e)).count(),
+            entries.len()
         );
     }
 
     #[test]
     fn search_is_case_insensitive_over_name_author_and_tags() {
+        let entries = fixture();
         let by_name = GalleryFilter {
             search: "IcEwInD".to_string(),
             ..Default::default()
         };
-        assert!(by_name.matches(entry("Icewind Dale Essentials")));
-        assert!(!by_name.matches(entry("EET Essentials")));
+        assert!(by_name.matches(find(&entries, "Icewind Dale Essentials")));
+        assert!(!by_name.matches(find(&entries, "EET Essentials")));
 
         let by_author = GalleryFilter {
             search: "bio team".to_string(),
             ..Default::default()
         };
-        assert!(by_author.matches(entry("EET Essentials")));
-        assert!(!by_author.matches(entry("BGEE Vanilla+ (with DLC)")));
+        assert!(by_author.matches(find(&entries, "EET Essentials")));
 
         let by_tag = GalleryFilter {
             search: "fixes".to_string(),
             ..Default::default()
         };
-        assert!(by_tag.matches(entry("EET + Fixes")));
-        assert!(!by_tag.matches(entry("EET Essentials")));
+        assert!(by_tag.matches(find(&entries, "EET + Fixes")));
+        assert!(!by_tag.matches(find(&entries, "EET Essentials")));
     }
 
     #[test]
     fn search_matches_the_game_label_and_ignores_surrounding_whitespace() {
+        let entries = fixture();
         let filter = GalleryFilter {
             search: "  iwd  ".to_string(),
             ..Default::default()
         };
-        assert_eq!(
-            catalog::entries()
-                .iter()
-                .filter(|e| filter.matches(e))
-                .count(),
-            1
-        );
-        assert!(filter.matches(entry("Icewind Dale Essentials")));
+        assert_eq!(entries.iter().filter(|e| filter.matches(e)).count(), 1);
+        assert!(filter.matches(find(&entries, "Icewind Dale Essentials")));
     }
 
     #[test]
     fn game_filter_keeps_only_that_game() {
+        let entries = fixture();
         let filter = GalleryFilter {
             game: Some(Game::BGEE),
             ..Default::default()
         };
-        assert_eq!(
-            catalog::entries()
-                .iter()
-                .filter(|e| filter.matches(e))
-                .count(),
-            2
-        );
+        assert_eq!(entries.iter().filter(|e| filter.matches(e)).count(), 2);
     }
 
     #[test]
-    fn starter_only_keeps_the_starter_lists() {
+    fn featured_only_keeps_the_featured_lists() {
+        let entries = fixture();
         let filter = GalleryFilter {
-            starter_only: true,
+            featured_only: true,
             ..Default::default()
         };
-        assert_eq!(
-            catalog::entries()
-                .iter()
-                .filter(|e| filter.matches(e))
-                .count(),
-            3
-        );
+        assert_eq!(entries.iter().filter(|e| filter.matches(e)).count(), 3);
     }
 
     #[test]
     fn filters_combine_as_an_intersection() {
+        let entries = fixture();
         let filter = GalleryFilter {
             search: "eet".to_string(),
             game: Some(Game::EET),
-            starter_only: true,
+            featured_only: true,
         };
-        assert_eq!(
-            catalog::entries()
-                .iter()
-                .filter(|e| filter.matches(e))
-                .count(),
-            2
-        );
+        assert_eq!(entries.iter().filter(|e| filter.matches(e)).count(), 2);
     }
 
     #[test]

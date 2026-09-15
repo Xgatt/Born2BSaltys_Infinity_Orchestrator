@@ -3,9 +3,9 @@
 
 use eframe::egui;
 
+use crate::gallery_feed::index::FeedEntry;
 use crate::registry::model::Game;
 use crate::ui::install::gallery::card_art;
-use crate::ui::install::gallery::catalog::{self, GalleryEntry};
 use crate::ui::install::gallery::filter::{CARD_GAP_PX, GalleryFilter, column_count};
 use crate::ui::install::state_install::InstallScreenState;
 use crate::ui::orchestrator::widgets::{
@@ -17,13 +17,13 @@ use crate::ui::shared::redesign_tokens::{
     redesign_text_primary,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum GalleryOutcome {
     #[default]
     Stay,
     OpenPaste,
     OpenFile,
-    OpenDetails(usize),
+    OpenDetails(String),
 }
 
 const GAME_OPTIONS: [Game; 4] = [Game::BGEE, Game::BG2EE, Game::IWDEE, Game::EET];
@@ -65,10 +65,11 @@ pub fn render(
     filter_row(ui, palette, &mut state.gallery.filter);
     ui.add_space(12.0);
 
-    let visible: Vec<(usize, &'static GalleryEntry)> = catalog::entries()
+    let visible: Vec<&FeedEntry> = state
+        .gallery
+        .entries
         .iter()
-        .enumerate()
-        .filter(|(_, entry)| state.gallery.filter.matches(entry))
+        .filter(|entry| state.gallery.filter.matches(entry))
         .collect();
 
     ui.label(
@@ -89,8 +90,8 @@ pub fn render(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            if let Some(index) = card_grid(ui, palette, &visible) {
-                outcome = GalleryOutcome::OpenDetails(index);
+            if let Some(id) = card_grid(ui, palette, &visible) {
+                outcome = GalleryOutcome::OpenDetails(id);
             }
         });
 
@@ -145,8 +146,8 @@ fn filter_row(ui: &mut egui::Ui, palette: ThemePalette, filter: &mut GalleryFilt
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.checkbox(
-                    &mut filter.starter_only,
-                    egui::RichText::new("Starter lists only")
+                    &mut filter.featured_only,
+                    egui::RichText::new("Featured only")
                         .size(13.0)
                         .family(egui::FontFamily::Name("poppins_light".into()))
                         .color(redesign_text_muted(palette)),
@@ -308,11 +309,7 @@ fn card_metrics(ui: &egui::Ui, card_w: f32) -> CardMetrics {
     }
 }
 
-fn card_grid(
-    ui: &mut egui::Ui,
-    palette: ThemePalette,
-    visible: &[(usize, &'static GalleryEntry)],
-) -> Option<usize> {
+fn card_grid(ui: &mut egui::Ui, palette: ThemePalette, visible: &[&FeedEntry]) -> Option<String> {
     let mut opened = None;
 
     let available = ui.available_width();
@@ -324,17 +321,17 @@ fn card_grid(
     for row in visible.chunks(columns) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = CARD_GAP_PX;
-            for (index, entry) in row {
+            for entry in row {
                 ui.allocate_ui_with_layout(
                     egui::vec2(metrics.card_w, metrics.content_h),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.set_width(metrics.card_w);
                         let clicked = ui
-                            .push_id(entry.id, |ui| card(ui, palette, entry, &metrics))
+                            .push_id(&entry.id, |ui| card(ui, palette, entry, &metrics))
                             .inner;
                         if clicked {
-                            opened = Some(*index);
+                            opened = Some(entry.id.clone());
                         }
                     },
                 );
@@ -367,7 +364,7 @@ const fn columns_as_f32(columns: usize) -> f32 {
 fn card(
     ui: &mut egui::Ui,
     palette: ThemePalette,
-    entry: &GalleryEntry,
+    entry: &FeedEntry,
     metrics: &CardMetrics,
 ) -> bool {
     let mut open_details = false;
@@ -378,13 +375,17 @@ fn card(
 
         let (art_rect, _) =
             ui.allocate_exact_size(egui::vec2(inner_w, metrics.art_h), egui::Sense::hover());
-        card_art::paint(ui, palette, entry.game, art_rect);
+        if let Some(png) = entry.cover_png.as_deref() {
+            card_art::paint_cover(ui, palette, entry.game, &entry.id, png, art_rect);
+        } else {
+            card_art::paint(ui, palette, entry.game, art_rect);
+        }
 
         ui.add_space(10.0);
         clipped_line(ui, inner_w, metrics.title_h, |ui| {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new(entry.name)
+                    egui::RichText::new(entry.name.as_str())
                         .size(16.0)
                         .family(egui::FontFamily::Name("poppins_medium".into()))
                         .color(redesign_text_primary(palette)),
@@ -407,18 +408,15 @@ fn card(
         });
 
         ui.add_space(8.0);
-        clipped_description(ui, palette, entry.description, inner_w, metrics.desc_h);
+        clipped_description(ui, palette, &entry.description, inner_w, metrics.desc_h);
 
         ui.add_space(8.0);
         clipped_line(ui, inner_w, metrics.pills_h, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                 render_pill(ui, palette, entry.game.to_legacy_string(), PillTone::Info);
-                for tag in entry.tags {
+                for tag in &entry.tags {
                     render_pill(ui, palette, tag, PillTone::Neutral);
-                }
-                if entry.sample {
-                    render_pill(ui, palette, "Sample", PillTone::Warn);
                 }
             });
         });

@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
+use std::sync::Arc;
+use std::sync::mpsc::Receiver;
+
 use crate::app::mod_downloads::SourceTiers;
 use crate::app::modlist_share::ModlistSharePreview;
+use crate::gallery_feed::cache::load_cached_index;
+use crate::gallery_feed::fetch::FetchOutcome;
+use crate::gallery_feed::index::{FeedEntry, parse_index};
+use crate::gallery_feed::snapshot::snapshot_entries;
 use crate::ui::install::gallery::filter::GalleryFilter;
 use crate::ui::install::inside_model::{self, InsideModel};
 use crate::ui::install::stage_downloading::{DownloadProgress, SkippedMod};
@@ -59,10 +66,69 @@ pub enum PipelineKind {
     Fork,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
+pub(crate) enum FeedFetch {
+    #[default]
+    Disabled,
+    NotStarted,
+    Running(Receiver<FetchOutcome>),
+    Applied,
+    Pending(Arc<Vec<FeedEntry>>),
+}
+
+impl std::fmt::Debug for FeedFetch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Disabled => "Disabled",
+            Self::NotStarted => "NotStarted",
+            Self::Running(_) => "Running",
+            Self::Applied => "Applied",
+            Self::Pending(_) => "Pending",
+        };
+        f.write_str(name)
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct GalleryScreenState {
     pub(crate) filter: GalleryFilter,
-    pub(crate) selected: Option<usize>,
+    pub(crate) selected: Option<String>,
+    pub(crate) entries: Arc<Vec<FeedEntry>>,
+    pub(crate) cached_etag: Option<String>,
+    pub(crate) fetch: FeedFetch,
+}
+
+impl Default for GalleryScreenState {
+    fn default() -> Self {
+        Self {
+            filter: GalleryFilter::default(),
+            selected: None,
+            entries: Arc::new(snapshot_entries().to_vec()),
+            cached_etag: None,
+            fetch: FeedFetch::Disabled,
+        }
+    }
+}
+
+impl GalleryScreenState {
+    pub(crate) fn load_cached_feed_and_arm_fetch(&mut self) {
+        let cached = load_cached_index();
+        if let Some(entries) = cached
+            .as_ref()
+            .and_then(|cached| parse_index(&cached.bytes).ok())
+        {
+            self.entries = Arc::new(entries);
+        }
+        self.cached_etag = cached.and_then(|cached| cached.etag);
+        self.fetch = FeedFetch::NotStarted;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_feed_to_snapshot(&mut self) {
+        self.entries = Arc::new(snapshot_entries().to_vec());
+        self.cached_etag = None;
+        self.fetch = FeedFetch::Disabled;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -271,7 +337,7 @@ impl InstallPipelineFlags {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct InstallScreenState {
     pub(crate) source_compat_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
     pub(crate) source_residue_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
@@ -328,7 +394,11 @@ impl InstallScreenState {
     }
 
     pub fn reset_to_gallery(&mut self) {
+        let feed = std::mem::take(&mut self.gallery);
         *self = Self::default();
+        self.gallery.entries = feed.entries;
+        self.gallery.cached_etag = feed.cached_etag;
+        self.gallery.fetch = feed.fetch;
     }
 
     pub(crate) fn inside_model(
@@ -596,6 +666,25 @@ mod tests {
     }
 
     #[test]
+    fn reset_to_gallery_keeps_the_feed_and_clears_the_selection() {
+        let mut st = InstallScreenState::default();
+        let one_entry = Arc::new(vec![snapshot_entries()[0].clone()]);
+        st.gallery.entries = Arc::clone(&one_entry);
+        st.gallery.cached_etag = Some("\"abc\"".to_string());
+        st.gallery.fetch = FeedFetch::Applied;
+        st.gallery.selected = Some(snapshot_entries()[0].id.clone());
+        st.gallery.filter.featured_only = true;
+
+        st.reset_to_gallery();
+
+        assert_eq!(st.gallery.entries.len(), 1);
+        assert_eq!(st.gallery.cached_etag.as_deref(), Some("\"abc\""));
+        assert!(matches!(st.gallery.fetch, FeedFetch::Applied));
+        assert!(st.gallery.selected.is_none());
+        assert!(!st.gallery.filter.featured_only);
+    }
+
+    #[test]
     fn inside_model_is_built_once_and_dropped_with_the_preview() {
         let preview = ModlistSharePreview {
             bio_version: "0.1.0-test".to_string(),
@@ -643,8 +732,7 @@ mod tests {
         let entry = catalog::entries()
             .first()
             .expect("the catalog is not empty");
-        let code = catalog::share_code(entry).expect("stub code generates");
-        let preview = preview_modlist_share_code(&code).expect("stub code parses");
+        let preview = preview_modlist_share_code(&entry.code).expect("stub code parses");
 
         let mut st = InstallScreenState {
             parsed_preview: Some(preview),

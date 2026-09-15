@@ -1,0 +1,11 @@
+{
+  "id": "bgee-vanilla-plus",
+  "name": "BGEE Vanilla+ (with DLC)",
+  "author": "Community Collection",
+  "description": "Baldur's Gate as it shipped, minus the rough edges: Siege of Dragonspear merged in first, then the community fixpack and a light pass of quality-of-life tweaks.",
+  "tags": ["Vanilla+", "Quality of life", "Siege of Dragonspear"],
+  "game": "BGEE",
+  "featured": false,
+  "version": "1.0.0",
+  "requirements": "Baldur's Gate: Enhanced Edition with the Siege of Dragonspear DLC"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "bgee-vanilla-plus-no-dlc",
+  "name": "BGEE Vanilla+ (no DLC)",
+  "author": "Community Collection",
+  "description": "Baldur's Gate as it shipped, minus the rough edges, for a game without the Siege of Dragonspear archive: the community fixpack only.",
+  "tags": ["Vanilla+", "Fixes only"],
+  "game": "BGEE",
+  "featured": false,
+  "version": "1.0.0"
+}
