@@ -177,6 +177,9 @@ fn write_reference_configs(
         let Some(relative) = config_relative_path(&file.relative_path) else {
             continue;
         };
+        if crate::app::modlist_config_files::is_os_artifact_file(Path::new(&relative)) {
+            continue;
+        }
         let folder = config_folder_name(&file.tp2);
         let entry_name = format!("reference/config/{folder}/{relative}");
         write_entry(writer, &entry_name, &bytes)?;
@@ -280,6 +283,12 @@ mod tests {
                         "source_id": "main",
                         "relative_path": "settings.ini",
                         "base64_data": "YT0xCg"
+                    },
+                    {
+                        "tp2": "EEFIXPACK/EEFIXPACK.TP2",
+                        "source_id": "main",
+                        "relative_path": "desktop.ini",
+                        "base64_data": "YT0xCg"
                     }
                 ]
             },
@@ -364,7 +373,8 @@ mod tests {
                 "reference/weidu/BG2EE.log".to_string(),
                 "reference/weidu/BGEE.log".to_string(),
                 "share-code.txt".to_string(),
-            ]
+            ],
+            "the payload's desktop.ini entry is never unpacked into the reference folder"
         );
 
         assert_eq!(

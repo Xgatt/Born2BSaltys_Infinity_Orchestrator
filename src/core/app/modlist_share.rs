@@ -784,6 +784,9 @@ fn export_mod_config_files(state: &WizardState) -> Result<Vec<ModlistShareConfig
         for relative_path in &source.config_files {
             let relative_path =
                 crate::app::modlist_config_files::validate_relative_config_path(relative_path)?;
+            if crate::app::modlist_config_files::is_os_artifact_file(&relative_path) {
+                continue;
+            }
             let path = mod_root.join(&relative_path);
             if !path.is_file() {
                 continue;
@@ -1119,7 +1122,7 @@ fn zlib_decompress(bytes: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn base64url_encode(bytes: &[u8]) -> String {
+pub(crate) fn base64url_encode(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {

@@ -55,6 +55,20 @@ pub(crate) fn save_pending_mod_configs(
     fs::write(path, content).map_err(|err| err.to_string())
 }
 
+const OS_ARTIFACT_FILE_NAMES: [&str; 3] = ["desktop.ini", "thumbs.db", ".ds_store"];
+
+#[must_use]
+pub(crate) fn is_os_artifact_file(relative_path: &Path) -> bool {
+    relative_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            OS_ARTIFACT_FILE_NAMES
+                .iter()
+                .any(|artifact| name.eq_ignore_ascii_case(artifact))
+        })
+}
+
 pub(crate) fn validate_relative_config_path(relative_path: &str) -> Result<PathBuf, String> {
     let normalized = relative_path.trim().replace('\\', "/");
     if normalized.is_empty() {
@@ -107,6 +121,9 @@ pub(crate) fn restore_pending_mod_configs_for_mod(
             continue;
         }
         let relative_path = validate_relative_config_path(&file.relative_path)?;
+        if is_os_artifact_file(&relative_path) {
+            continue;
+        }
         let destination = safe_config_destination(target_root, &relative_path)?;
         let bytes = base64url_decode(&file.base64_data)
             .map_err(|err| format!("Decode pending mod config failed: {err}"))?;
@@ -207,4 +224,99 @@ fn base64url_decode(text: &str) -> Result<Vec<u8>, String> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::modlist_share::ModlistShareConfigFile;
+    use crate::platform_defaults::{clear_config_dir_override_if, set_config_dir_override};
+
+    struct TempRootGuard(PathBuf);
+
+    impl Drop for TempRootGuard {
+        fn drop(&mut self) {
+            clear_config_dir_override_if(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn temp_root(tag: &str) -> TempRootGuard {
+        let root = std::env::temp_dir().join(format!(
+            "bio_modcfg_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("temp root");
+        set_config_dir_override(Some(root.clone()));
+        TempRootGuard(root)
+    }
+
+    #[test]
+    fn os_artifact_names_are_recognised_case_insensitively() {
+        assert!(is_os_artifact_file(Path::new("desktop.ini")));
+        assert!(is_os_artifact_file(Path::new("Desktop.INI")));
+        assert!(is_os_artifact_file(Path::new("sub/Thumbs.db")));
+        assert!(is_os_artifact_file(Path::new(".DS_Store")));
+        assert!(!is_os_artifact_file(Path::new("cdtweaks.ini")));
+        assert!(!is_os_artifact_file(Path::new("desktop.ini.bak")));
+        assert!(!is_os_artifact_file(Path::new("thumbs/settings.ini")));
+    }
+
+    #[test]
+    fn restore_skips_os_artifacts_and_writes_real_configs() {
+        let guard = temp_root("restore_skip");
+        let mod_root = guard.0.join("mod");
+        fs::create_dir_all(&mod_root).expect("mod root");
+        let files = vec![
+            ModlistShareConfigFile {
+                tp2: "cdtweaks".to_string(),
+                source_id: "gibberlings3".to_string(),
+                relative_path: "cdtweaks.ini".to_string(),
+                base64_data: crate::app::modlist_share::base64url_encode(b"[cfg]\nx=1\n"),
+            },
+            ModlistShareConfigFile {
+                tp2: "cdtweaks".to_string(),
+                source_id: "gibberlings3".to_string(),
+                relative_path: "desktop.ini".to_string(),
+                base64_data: crate::app::modlist_share::base64url_encode(b"[.ShellClassInfo]\n"),
+            },
+        ];
+        assert!(pending_mod_configs_path().starts_with(&guard.0));
+        save_pending_mod_configs(&files).expect("pending file written under the override");
+
+        restore_pending_mod_configs_for_mod("cdtweaks", "gibberlings3", &[], &mod_root)
+            .expect("restore");
+
+        assert!(mod_root.join("cdtweaks.ini").is_file());
+        assert!(!mod_root.join("desktop.ini").exists());
+    }
+
+    #[test]
+    fn default_sources_list_no_os_artifact_config_files() {
+        let load = crate::app::mod_downloads::load_mod_download_sources_from_texts(
+            include_str!("../config/default_mod_downloads.toml"),
+            "",
+            "",
+        );
+        assert!(load.error.is_none(), "{:?}", load.error);
+        let offenders: Vec<String> = load
+            .sources
+            .iter()
+            .flat_map(|source| {
+                source
+                    .config_files
+                    .iter()
+                    .filter(|path| {
+                        validate_relative_config_path(path)
+                            .is_ok_and(|normalized| is_os_artifact_file(&normalized))
+                    })
+                    .map(|path| format!("{}: {path}", source.tp2))
+            })
+            .collect();
+        assert!(offenders.is_empty(), "{offenders:?}");
+    }
 }
