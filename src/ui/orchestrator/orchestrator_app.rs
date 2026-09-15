@@ -1634,6 +1634,7 @@ impl OrchestratorApp {
     fn cleanup_isolated_test_workspace_root(&mut self) {
         if let Some(root) = self.isolated_test_workspace_root.take() {
             let _ = std::fs::remove_dir_all(&root);
+            crate::registry::store_workspace::clear_modlist_data_root_if(&root);
         }
     }
 }
@@ -1770,6 +1771,27 @@ mod tests {
             app.wizard_state.step1.prepare_target_dirs_before_install,
             crate::app::state::Step1State::default().prepare_target_dirs_before_install
         );
+    }
+
+    #[test]
+    fn dropping_an_isolated_app_clears_its_workspace_root() {
+        let app = OrchestratorApp::new_isolated_for_test("root-clear");
+        let root = app
+            .isolated_test_workspace_root
+            .clone()
+            .expect("isolated app carries a workspace root");
+        assert!(
+            crate::registry::store_workspace::modlist_data_dir("X").starts_with(&root),
+            "the root is active while the app is alive"
+        );
+
+        drop(app);
+
+        assert!(
+            !crate::registry::store_workspace::modlist_data_dir("X").starts_with(&root),
+            "the root is cleared once the app that owns it drops"
+        );
+        assert!(!root.exists());
     }
 
     fn dirty_ws() -> WizardState {

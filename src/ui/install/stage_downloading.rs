@@ -696,7 +696,14 @@ fn finish_pipeline_arm_after_destination_prep(
         .set_armed(true);
 
     let early_mint_result = if auto_build_driver::is_share_code_consuming(inputs.workflow) {
-        install_modlist_registration::early_mint_modlist_id(orchestrator, &inputs.destination)
+        match install_modlist_registration::early_mint_modlist_id(orchestrator, &inputs.destination)
+        {
+            Ok(result) => result,
+            Err(err) => {
+                set_pipeline_arm_error(orchestrator, &err);
+                return;
+            }
+        }
     } else {
         None
     };

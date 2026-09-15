@@ -22,6 +22,7 @@ pub(crate) struct ReplacedEntry {
     pub(crate) entry: ModlistEntry,
     pub(crate) index: usize,
     pub(crate) data_dir: PathBuf,
+    pub(crate) replacement_id: Option<String>,
 }
 
 pub(crate) fn register_install_modlist_paste(
@@ -92,7 +93,7 @@ fn existing_entry_id_for_destination(
     registry
         .entries
         .iter()
-        .find(|e| e.destination_folder.trim() == dest)
+        .find(|e| !e.id.trim().is_empty() && e.destination_folder.trim() == dest)
         .map(|e| e.id.clone())
 }
 
@@ -100,14 +101,16 @@ fn replace_existing_destination_entry(
     orchestrator: &mut OrchestratorApp,
     old_id: &str,
     destination: &str,
-) -> Option<(String, bool)> {
+) -> Result<(String, bool), String> {
     let Some(preview) = orchestrator.install_screen_state.parsed_preview.clone() else {
         warn!(
             target = "orchestrator",
             "early_mint_modlist_id: destination is owned by {old_id} but there is no \
              parsed preview — cannot replace it"
         );
-        return None;
+        return Err(format!(
+            "the modlist at {destination} could not be replaced: the share code has no preview"
+        ));
     };
 
     let Some((old_index, old_entry)) = orchestrator
@@ -121,7 +124,9 @@ fn replace_existing_destination_entry(
             target = "orchestrator",
             "early_mint_modlist_id: replaced entry {old_id} vanished from the registry"
         );
-        return None;
+        return Err(format!(
+            "the modlist at {destination} could not be replaced: it is no longer in the registry"
+        ));
     };
     let old_name = old_entry.name.clone();
 
@@ -138,7 +143,7 @@ fn replace_existing_destination_entry(
                 target = "orchestrator",
                 "early_mint_modlist_id: removing the replaced entry {old_id} failed: {err}"
             );
-            return None;
+            return Err(format!("'{old_name}' could not be replaced: {err}"));
         }
     }
     orchestrator.workspace_state.remove(old_id);
@@ -147,6 +152,7 @@ fn replace_existing_destination_entry(
         entry: old_entry,
         index: old_index,
         data_dir: store_workspace::modlist_data_dir(old_id),
+        replacement_id: None,
     });
 
     let entry =
@@ -159,9 +165,12 @@ fn replace_existing_destination_entry(
                     "early_mint_modlist_id: register_install_modlist_paste failed while \
                      replacing {old_id}: {err}"
                 );
-                return None;
+                return Err(format!("'{old_name}' could not be replaced: {err}"));
             }
         };
+    if let Some(replaced) = orchestrator.pending_replaced_entry.as_mut() {
+        replaced.replacement_id = Some(entry.id.clone());
+    }
     persist_new_install_workspace(orchestrator, &entry);
     info!(
         target = "orchestrator",
@@ -169,23 +178,26 @@ fn replace_existing_destination_entry(
         entry.id,
         entry.name
     );
-    Some((entry.id, true))
+    Ok((entry.id, true))
 }
 
 pub fn early_mint_modlist_id(
     orchestrator: &mut OrchestratorApp,
     destination: &str,
-) -> Option<(String, bool)> {
+) -> Result<Option<(String, bool)>, String> {
     if let Some(id) = orchestrator
         .pending_reinstall_id
         .as_ref()
         .filter(|id| orchestrator.registry.find(id).is_some())
         .cloned()
     {
-        return Some((id, false));
+        return Ok(Some((id, false)));
     }
     if let Some(old_id) = existing_entry_id_for_destination(&orchestrator.registry, destination) {
-        return replace_existing_destination_entry(orchestrator, &old_id, destination);
+        if orchestrator.active_install_modlist_id.as_deref() == Some(old_id.as_str()) {
+            return Ok(Some((old_id, false)));
+        }
+        return replace_existing_destination_entry(orchestrator, &old_id, destination).map(Some);
     }
 
     let Some(preview) = orchestrator.install_screen_state.parsed_preview.clone() else {
@@ -193,7 +205,7 @@ pub fn early_mint_modlist_id(
             target = "orchestrator",
             "early_mint_modlist_id: no parsed preview — cannot create early entry"
         );
-        return None;
+        return Ok(None);
     };
     let entry =
         match register_install_modlist_paste(&preview, destination, &mut orchestrator.registry) {
@@ -203,7 +215,7 @@ pub fn early_mint_modlist_id(
                     target = "orchestrator",
                     "early_mint_modlist_id: register_install_modlist_paste failed: {err}"
                 );
-                return None;
+                return Ok(None);
             }
         };
     persist_new_install_workspace(orchestrator, &entry);
@@ -211,7 +223,7 @@ pub fn early_mint_modlist_id(
         target = "orchestrator",
         "early_mint_modlist_id: minted net-new entry {} before import", entry.id
     );
-    Some((entry.id, true))
+    Ok(Some((entry.id, true)))
 }
 
 fn restore_pending_replaced_entry(orchestrator: &mut OrchestratorApp) {
@@ -219,6 +231,14 @@ fn restore_pending_replaced_entry(orchestrator: &mut OrchestratorApp) {
         return;
     };
     let restored_id = replaced.entry.id.clone();
+    if let Some(replacement_id) = replaced.replacement_id {
+        orchestrator
+            .registry
+            .entries
+            .retain(|e| e.id != replacement_id);
+        orchestrator.workspace_state.remove(&replacement_id);
+        orchestrator.workspace_stores.remove(&replacement_id);
+    }
     let index = replaced.index.min(orchestrator.registry.entries.len());
     orchestrator.registry.entries.insert(index, replaced.entry);
     if let Err(err) = orchestrator.registry_store.save(&orchestrator.registry) {
@@ -265,6 +285,7 @@ pub fn register_and_write_install_start_artifacts(orchestrator: &mut Orchestrato
         .to_string();
 
     let Some(modlist_id) = install_start_modlist_id(orchestrator, &destination) else {
+        restore_pending_replaced_entry(orchestrator);
         return false;
     };
 
@@ -317,15 +338,26 @@ pub fn register_and_write_install_start_artifacts(orchestrator: &mut Orchestrato
 }
 
 fn finalize_pending_replaced_entry(orchestrator: &mut OrchestratorApp, started_id: &str) {
-    let Some(replaced) = &orchestrator.pending_replaced_entry else {
+    let Some(replaced) = orchestrator.pending_replaced_entry.take() else {
         return;
     };
-    if replaced.entry.id == started_id {
+    let replaced_id = replaced.entry.id;
+    if replaced_id == started_id {
+        warn!(
+            target = "orchestrator",
+            "finalize_pending_replaced_entry: the started install is the replaced entry \
+             {started_id}; nothing to remove"
+        );
         return;
     }
-    let data_dir = replaced.data_dir.clone();
-    let replaced_id = replaced.entry.id.clone();
-    orchestrator.pending_replaced_entry = None;
+    if replaced_id.trim().is_empty() {
+        warn!(
+            target = "orchestrator",
+            "finalize_pending_replaced_entry: refusing to remove a data dir for a blank id"
+        );
+        return;
+    }
+    let data_dir = replaced.data_dir;
     if let Err(err) = std::fs::remove_dir_all(&data_dir)
         && err.kind() != std::io::ErrorKind::NotFound
     {
@@ -663,7 +695,9 @@ mod tests {
         ));
         app.install_screen_state.destination = "D:\\dest".to_string();
 
-        let (id, minted) = early_mint_modlist_id(&mut app, "D:\\dest").expect("replaced");
+        let (id, minted) = early_mint_modlist_id(&mut app, "D:\\dest")
+            .expect("replaced")
+            .expect("minted");
 
         assert!(minted, "a replace mints a genuinely fresh entry");
         assert_ne!(id, "EXISTING00001", "the old id is retired, not reused");
@@ -716,7 +750,9 @@ mod tests {
         ));
         app.install_screen_state.destination = "D:\\dest".to_string();
 
-        let (new_id, minted) = early_mint_modlist_id(&mut app, "D:\\dest").expect("replaced");
+        let (new_id, minted) = early_mint_modlist_id(&mut app, "D:\\dest")
+            .expect("replaced")
+            .expect("minted");
         assert!(minted);
 
         rollback_early_minted_entry(&mut app, &new_id);
@@ -763,8 +799,9 @@ mod tests {
         ));
         app.install_screen_state.destination = dest.as_string();
 
-        let (new_id, minted) =
-            early_mint_modlist_id(&mut app, &dest.as_string()).expect("replaced");
+        let (new_id, minted) = early_mint_modlist_id(&mut app, &dest.as_string())
+            .expect("replaced")
+            .expect("minted");
         assert!(minted);
         let old_data_dir = app
             .pending_replaced_entry
@@ -880,5 +917,126 @@ mod tests {
 
         assert_eq!(existing_entry_id_for_destination(&reg, ""), None);
         assert_eq!(existing_entry_id_for_destination(&reg, "   "), None);
+
+        reg.entries.push(ModlistEntry {
+            id: String::new(),
+            destination_folder: "D:\\blank".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(existing_entry_id_for_destination(&reg, "D:\\blank"), None);
+    }
+
+    #[test]
+    fn fork_owned_destination_is_adopted_not_replaced() {
+        let mut app = app_with_dest_entry("fork-adopt", "D:\\dest", "My fork");
+        app.active_install_modlist_id = Some("EXISTING00001".to_string());
+        app.install_screen_state.parsed_preview = Some(preview_with_description(
+            Some("Parent"),
+            "EET",
+            None,
+            Some("Parent description"),
+            vec![],
+        ));
+        app.install_screen_state.destination = "D:\\dest".to_string();
+
+        let result = early_mint_modlist_id(&mut app, "D:\\dest");
+
+        assert_eq!(
+            result,
+            Ok(Some(("EXISTING00001".to_string(), false))),
+            "the fork's own owned destination is adopted, never replaced"
+        );
+        assert_eq!(app.registry.entries.len(), 1);
+        assert_eq!(app.registry.find("EXISTING00001").unwrap().name, "My fork");
+        assert!(app.pending_replaced_entry.is_none());
+    }
+
+    #[test]
+    fn failed_replace_is_an_arm_error_not_an_adoption() {
+        let mut app = app_with_dest_entry("replace-noprev", "D:\\dest", "EET Essentials");
+        app.install_screen_state.parsed_preview = None;
+        app.active_install_modlist_id = None;
+
+        let result = early_mint_modlist_id(&mut app, "D:\\dest");
+
+        assert!(
+            matches!(result, Err(ref msg) if msg.contains("could not be replaced")),
+            "got {result:?}"
+        );
+        assert!(app.registry.find("EXISTING00001").is_some());
+        assert!(app.pending_replaced_entry.is_none());
+    }
+
+    #[test]
+    fn install_start_failure_restores_the_replaced_entry() {
+        let mut app = app_with_dest_entry("replace-restore", "D:\\dest", "EET Essentials");
+        {
+            let old = app.registry.find_mut("EXISTING00001").unwrap();
+            old.description = Some("Old description".to_string());
+            old.latest_share_code = Some(minimal_share_code("EET Essentials"));
+        }
+        app.install_screen_state.parsed_preview = Some(preview_with_description(
+            Some("EET Essentials 2"),
+            "EET",
+            None,
+            Some("Catalog description"),
+            vec![],
+        ));
+        app.install_screen_state.destination = "D:\\dest".to_string();
+
+        early_mint_modlist_id(&mut app, "D:\\dest")
+            .expect("replaced")
+            .expect("minted");
+
+        app.install_screen_state.parsed_preview = None;
+        app.install_screen_state.destination = "D:\\elsewhere".to_string();
+
+        let ok = register_and_write_install_start_artifacts(&mut app);
+
+        assert!(!ok, "install start could not resolve a modlist id");
+        assert!(app.pending_replaced_entry.is_none());
+        let restored = app
+            .registry
+            .find("EXISTING00001")
+            .expect("the replaced entry is restored");
+        assert_eq!(restored.name, "EET Essentials");
+        assert_eq!(restored.destination_folder, "D:\\dest");
+        assert_eq!(app.registry.entries[0].id, "EXISTING00001");
+        assert_eq!(
+            app.registry.entries.len(),
+            1,
+            "the orphan replacement entry is retired with the restore"
+        );
+    }
+
+    struct TempDirGuard(PathBuf);
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn finalize_refuses_a_blank_id() {
+        let mut app = OrchestratorApp::new_isolated_for_test("finalize-blank");
+        let dir = std::env::temp_dir().join(format!("bio_finalize_blank_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let guard = TempDirGuard(dir.clone());
+        app.pending_replaced_entry = Some(ReplacedEntry {
+            entry: ModlistEntry {
+                id: String::new(),
+                ..Default::default()
+            },
+            index: 0,
+            data_dir: dir.clone(),
+            replacement_id: None,
+        });
+
+        finalize_pending_replaced_entry(&mut app, "NEWID0000001");
+
+        assert!(dir.is_dir(), "a blank id's data dir is never removed");
+        assert!(app.pending_replaced_entry.is_none());
+        drop(guard);
     }
 }

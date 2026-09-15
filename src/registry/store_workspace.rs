@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Born2BSalty
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 use crate::platform_defaults::app_config_dir;
 use crate::registry::errors::RegistryError;
@@ -12,24 +11,34 @@ const MODLISTS_DIR: &str = "modlists";
 
 const WORKSPACE_FILE_NAME: &str = "workspace.json";
 
-static MODLIST_DATA_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
-
-fn modlist_data_root_mutex() -> &'static Mutex<Option<PathBuf>> {
-    MODLIST_DATA_ROOT.get_or_init(|| Mutex::new(None))
+#[cfg(test)]
+thread_local! {
+    static MODLIST_DATA_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
 pub(crate) fn set_modlist_data_root(root: Option<PathBuf>) {
-    if let Ok(mut guard) = modlist_data_root_mutex().lock() {
-        *guard = root;
-    }
+    MODLIST_DATA_ROOT.with(|slot| *slot.borrow_mut() = root);
 }
 
+#[cfg(test)]
+pub(crate) fn clear_modlist_data_root_if(root: &Path) {
+    MODLIST_DATA_ROOT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.as_deref() == Some(root) {
+            *slot = None;
+        }
+    });
+}
+
+#[cfg(test)]
 fn modlist_data_root() -> Option<PathBuf> {
-    modlist_data_root_mutex()
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
+    MODLIST_DATA_ROOT.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(not(test))]
+const fn modlist_data_root() -> Option<PathBuf> {
+    None
 }
 
 #[must_use]
@@ -159,5 +168,37 @@ mod tests {
             other => panic!("expected Corrupt, got {other:?}"),
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn data_root_override_is_per_thread() {
+        let root = temp_root("per_thread");
+        set_modlist_data_root(Some(root.clone()));
+
+        assert!(modlist_data_dir("X").starts_with(&root));
+
+        let other_thread_path = std::thread::spawn(modlist_data_root_default_thread_dir)
+            .join()
+            .unwrap();
+        assert!(!other_thread_path.starts_with(&root));
+
+        set_modlist_data_root(None);
+    }
+
+    fn modlist_data_root_default_thread_dir() -> PathBuf {
+        modlist_data_dir("X")
+    }
+
+    #[test]
+    fn clear_only_matches_its_own_root() {
+        let root_a = temp_root("clear_a");
+        let root_b = temp_root("clear_b");
+        set_modlist_data_root(Some(root_a.clone()));
+
+        clear_modlist_data_root_if(&root_b);
+        assert!(modlist_data_dir("X").starts_with(&root_a));
+
+        clear_modlist_data_root_if(&root_a);
+        assert!(!modlist_data_dir("X").starts_with(&root_a));
     }
 }
