@@ -64,10 +64,9 @@ pub(crate) fn preview_update_selected_mod(
         Receiver<super::app_step2_update_check_worker::Step2UpdateCheckEvent>,
     >,
     sources: &ModDownloadsLoad,
+    target: (String, String),
 ) {
-    let Some((game_tab, tp_file)) = target_update_mod(state) else {
-        return;
-    };
+    let (game_tab, tp_file) = target;
     state.step2.update_selected_target_game_tab = Some(game_tab.clone());
     state.step2.update_selected_target_tp_file = Some(tp_file.clone());
     let selected_source_ids = state.step2.selected_source_ids.clone();
@@ -330,17 +329,21 @@ fn start_full_update_preview_check(
     }
 }
 
-fn target_update_mod(state: &WizardState) -> Option<(String, String)> {
-    if let (Some(game_tab), Some(tp_file)) = (
-        state.step2.update_selected_target_game_tab.clone(),
-        state.step2.update_selected_target_tp_file.clone(),
-    ) {
-        Some((game_tab, tp_file))
-    } else if let Some(Step2Selection::Mod { game_tab, tp_file }) = state.step2.selected.clone() {
-        Some((game_tab, tp_file))
-    } else {
-        None
+#[must_use]
+pub(crate) fn selected_mod_target(state: &WizardState) -> Option<(String, String)> {
+    match state.step2.selected.clone()? {
+        Step2Selection::Mod { game_tab, tp_file }
+        | Step2Selection::Component {
+            game_tab, tp_file, ..
+        } => Some((game_tab, tp_file)),
     }
+}
+
+#[must_use]
+pub(crate) fn popup_mod_target(state: &WizardState) -> Option<(String, String)> {
+    let game_tab = state.step2.update_selected_target_game_tab.clone()?;
+    let tp_file = state.step2.update_selected_target_tp_file.clone()?;
+    Some((game_tab, tp_file))
 }
 
 fn collect_target_update_preview(
@@ -735,5 +738,125 @@ mod tests {
     fn non_reproduce_non_exact_drops_version() {
         let state = WizardState::default();
         assert_eq!(forwarded_version(&state, Some("8.39")), None);
+    }
+
+    #[test]
+    fn selected_mod_target_from_mod_row() {
+        let state = WizardState {
+            step2: crate::app::state::Step2State {
+                selected: Some(Step2Selection::Mod {
+                    game_tab: "BGEE".to_string(),
+                    tp_file: "modA/modA.tp2".to_string(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_mod_target(&state),
+            Some(("BGEE".to_string(), "modA/modA.tp2".to_string()))
+        );
+    }
+
+    #[test]
+    fn selected_mod_target_from_component_row_is_its_mod() {
+        let state = WizardState {
+            step2: crate::app::state::Step2State {
+                selected: Some(Step2Selection::Component {
+                    game_tab: "BG2EE".to_string(),
+                    tp_file: "modC/modC.tp2".to_string(),
+                    component_id: "3".to_string(),
+                    component_key: "3".to_string(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_mod_target(&state),
+            Some(("BG2EE".to_string(), "modC/modC.tp2".to_string()))
+        );
+    }
+
+    #[test]
+    fn selected_mod_target_none_without_selection() {
+        let state = WizardState::default();
+        assert_eq!(selected_mod_target(&state), None);
+    }
+
+    #[test]
+    fn check_this_mod_target_follows_the_selection() {
+        let state = WizardState {
+            step2: crate::app::state::Step2State {
+                update_selected_target_game_tab: Some("BGEE".to_string()),
+                update_selected_target_tp_file: Some("modA/modA.tp2".to_string()),
+                selected: Some(Step2Selection::Mod {
+                    game_tab: "BG2EE".to_string(),
+                    tp_file: "modB/modB.tp2".to_string(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_mod_target(&state),
+            Some(("BG2EE".to_string(), "modB/modB.tp2".to_string())),
+            "the sticky fields must no longer act as a fallback over the live selection"
+        );
+    }
+
+    #[test]
+    fn popup_mod_target_reads_the_popup_record() {
+        let state = WizardState {
+            step2: crate::app::state::Step2State {
+                update_selected_target_game_tab: Some("BGEE".to_string()),
+                update_selected_target_tp_file: Some("modA/modA.tp2".to_string()),
+                selected: Some(Step2Selection::Mod {
+                    game_tab: "BG2EE".to_string(),
+                    tp_file: "modB/modB.tp2".to_string(),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            popup_mod_target(&state),
+            Some(("BGEE".to_string(), "modA/modA.tp2".to_string()))
+        );
+    }
+
+    #[test]
+    fn popup_mod_target_none_when_record_incomplete() {
+        let state = WizardState {
+            step2: crate::app::state::Step2State {
+                update_selected_target_game_tab: Some("BGEE".to_string()),
+                update_selected_target_tp_file: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(popup_mod_target(&state), None);
+    }
+
+    #[test]
+    fn preview_writes_the_target_fields() {
+        let mut state = WizardState::default();
+        let mut rx = None;
+        let sources = ModDownloadsLoad::default();
+        preview_update_selected_mod(
+            &mut state,
+            &mut rx,
+            &sources,
+            ("BGEE".to_string(), "modA/modA.tp2".to_string()),
+        );
+        assert_eq!(
+            state.step2.update_selected_target_game_tab,
+            Some("BGEE".to_string())
+        );
+        assert_eq!(
+            state.step2.update_selected_target_tp_file,
+            Some("modA/modA.tp2".to_string())
+        );
+        assert!(rx.is_none());
     }
 }

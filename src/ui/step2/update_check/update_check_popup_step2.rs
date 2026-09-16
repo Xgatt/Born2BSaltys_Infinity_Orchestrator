@@ -643,7 +643,7 @@ const fn check_action(modes: PopupModes, resources: &PopupResources<'_>) -> Step
     if modes.exact_log {
         Step2Action::CheckExactLogModList
     } else if resources.single_mod_target.is_some() {
-        Step2Action::PreviewUpdateSelectedMod
+        Step2Action::PreviewUpdatePopupMod
     } else {
         Step2Action::PreviewUpdateSelected
     }

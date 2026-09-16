@@ -6,12 +6,10 @@ use eframe::egui;
 use crate::ui::orchestrator::widgets::{ButtonIcon, clipboard, render_icon_button};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_strong,
-    redesign_input_bg, redesign_text_muted, redesign_text_primary,
+    redesign_input_bg, redesign_text_primary,
 };
 use crate::ui::step2::action_step2::Step2Action;
 use crate::ui::step2::state_step2::Step2Details;
-
-const COMPONENT_BLOCK_SELECT_HINT: &str = "Select a component to view its TP2 block.";
 
 #[derive(Clone, Copy)]
 pub(crate) struct PathsGridLayout {
@@ -343,26 +341,14 @@ pub(crate) fn render_component_block(
     ui: &mut egui::Ui,
     details: &Step2Details,
     palette: ThemePalette,
+    block: &str,
 ) {
     let id = ui.make_persistent_id((
         "step2_component_block",
         details.tp_file.as_deref().unwrap_or_default(),
         details.component_id.as_deref().unwrap_or_default(),
     ));
-    if let Some(block) = details.compat_component_block.as_deref() {
-        render_code_section(ui, palette, id, "Component Block", block, true);
-        return;
-    }
-    let placeholder = details.component_id.as_deref().map_or_else(
-        || COMPONENT_BLOCK_SELECT_HINT.to_string(),
-        |component_id| {
-            format!(
-                "No BEGIN block matched component #{component_id} in {}.",
-                details.tp_file.as_deref().unwrap_or("this TP2")
-            )
-        },
-    );
-    render_placeholder_section(ui, palette, id, "Component Block", &placeholder);
+    render_code_section(ui, palette, id, "Component Block", block, true);
 }
 
 pub(crate) fn render_raw_line(ui: &mut egui::Ui, details: &Step2Details, palette: ThemePalette) {
@@ -413,49 +399,21 @@ fn render_code_section(
                 .inner_margin(egui::Margin::symmetric(10, 8));
             frame.show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(value)
-                            .family(egui::FontFamily::Monospace)
-                            .color(redesign_text_primary(palette)),
-                    )
-                    .wrap(),
-                );
-            });
-        });
-}
-
-fn render_placeholder_section(
-    ui: &mut egui::Ui,
-    palette: ThemePalette,
-    id: egui::Id,
-    title: &str,
-    text: &str,
-) {
-    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-        .show_header(ui, |ui| {
-            ui.label(crate::ui::shared::typography_global::small_strong(title));
-        })
-        .body_unindented(|ui| {
-            let frame = egui::Frame::default()
-                .fill(redesign_input_bg(palette))
-                .stroke(egui::Stroke::new(
-                    REDESIGN_BORDER_WIDTH_PX,
-                    redesign_border_strong(palette),
-                ))
-                .corner_radius(egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8))
-                .inner_margin(egui::Margin::symmetric(10, 8));
-            frame.show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(text)
-                            .size(12.0)
-                            .family(egui::FontFamily::Name("poppins_light".into()))
-                            .color(redesign_text_muted(palette)),
-                    )
-                    .wrap(),
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt(id)
+                    .max_height(320.0)
+                    .min_scrolled_height(320.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(value)
+                                    .family(egui::FontFamily::Monospace)
+                                    .color(redesign_text_primary(palette)),
+                            )
+                            .wrap(),
+                        );
+                    });
             });
         });
 }

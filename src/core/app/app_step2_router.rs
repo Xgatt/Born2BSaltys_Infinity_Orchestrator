@@ -55,12 +55,12 @@ pub(crate) fn handle_step2_action(
             );
         }
         Step2Action::PreviewUpdateSelectedMod => {
-            let loaded = mod_downloads::load_mod_download_sources();
-            super::app_step2_update_preview::preview_update_selected_mod(
-                state,
-                step2_update_check_rx,
-                &loaded,
-            );
+            let target = super::app_step2_update_preview::selected_mod_target(state);
+            preview_update_target_mod(state, step2_update_check_rx, target);
+        }
+        Step2Action::PreviewUpdatePopupMod => {
+            let target = super::app_step2_update_preview::popup_mod_target(state);
+            preview_update_target_mod(state, step2_update_check_rx, target);
         }
         Step2Action::SetSelectedModUpdateLocked(locked) => {
             set_selected_mod_update_locked(state, locked);
@@ -119,6 +119,24 @@ pub(crate) fn handle_step2_action(
             component_key,
         } => open_compat_for_component(state, game_tab, tp_file, component_id, component_key),
         Step2Action::SelectBgeeViaLog | Step2Action::SelectBg2eeViaLog => {}
+    }
+}
+
+fn preview_update_target_mod(
+    state: &mut WizardState,
+    step2_update_check_rx: &mut Option<
+        Receiver<super::app_step2_update_check_worker::Step2UpdateCheckEvent>,
+    >,
+    target: Option<(String, String)>,
+) {
+    if let Some(target) = target {
+        let loaded = mod_downloads::load_mod_download_sources();
+        super::app_step2_update_preview::preview_update_selected_mod(
+            state,
+            step2_update_check_rx,
+            &loaded,
+            target,
+        );
     }
 }
 
@@ -583,12 +601,11 @@ fn refresh_update_result_for_tp2(
     state.step2.update_selected_refresh_target_tp_file = Some(tp_file.clone());
     let previous_target_game_tab = state.step2.update_selected_target_game_tab.clone();
     let previous_target_tp_file = state.step2.update_selected_target_tp_file.clone();
-    state.step2.update_selected_target_game_tab = Some(game_tab);
-    state.step2.update_selected_target_tp_file = Some(tp_file);
     super::app_step2_update_preview::preview_update_selected_mod(
         state,
         step2_update_check_rx,
         sources,
+        (game_tab, tp_file),
     );
     state.step2.update_selected_target_game_tab = previous_target_game_tab;
     state.step2.update_selected_target_tp_file = previous_target_tp_file;

@@ -169,7 +169,14 @@ pub mod compat_popup_details {
             egui::CollapsingHeader::new(strong_text_primary("Component block", palette))
                 .default_open(false)
                 .show(ui, |ui| {
-                    ui.monospace(block);
+                    egui::ScrollArea::vertical()
+                        .id_salt("step2_compat_popup_component_block")
+                        .max_height(240.0)
+                        .min_scrolled_height(240.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.monospace(block);
+                        });
                 });
         }
 
