@@ -251,6 +251,7 @@ mod tests {
     fn app_settings_round_trips_general() {
         let s = AppSettings {
             general: RedesignSettings {
+                gallery_index_url: String::new(),
                 user_name: "@me".to_string(),
                 theme_palette: crate::settings::redesign_fields::ThemeChoice::Light,
                 ..RedesignSettings::default()

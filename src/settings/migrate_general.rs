@@ -139,6 +139,7 @@ mod tests {
         };
         store.save(&settings).expect("save main");
         let legacy_settings = RedesignSettings {
+            gallery_index_url: String::new(),
             user_name: "@old".to_string(),
             theme_palette: crate::settings::redesign_fields::ThemeChoice::Light,
             ..RedesignSettings::default()
@@ -169,6 +170,7 @@ mod tests {
         let store = SettingsStore::new_with_path(&main);
         let settings = AppSettings {
             general: RedesignSettings {
+                gallery_index_url: String::new(),
                 user_name: "@new".to_string(),
                 ..RedesignSettings::default()
             },
@@ -176,6 +178,7 @@ mod tests {
         };
         store.save(&settings).expect("save main");
         let legacy_settings = RedesignSettings {
+            gallery_index_url: String::new(),
             user_name: "@old".to_string(),
             ..RedesignSettings::default()
         };
@@ -197,6 +200,7 @@ mod tests {
         let (main, legacy) = temp_paths("missing_main");
         let store = SettingsStore::new_with_path(&main);
         let legacy_settings = RedesignSettings {
+            gallery_index_url: String::new(),
             user_name: "@old".to_string(),
             ..RedesignSettings::default()
         };
@@ -248,6 +252,7 @@ mod tests {
         std::fs::write(&main, b"{not json").expect("write garbage main");
         let store = SettingsStore::new_with_path(&main);
         let legacy_settings = RedesignSettings {
+            gallery_index_url: String::new(),
             user_name: "@old".to_string(),
             ..RedesignSettings::default()
         };

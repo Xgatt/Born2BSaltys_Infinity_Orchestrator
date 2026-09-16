@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Born2BSalty
 
 use std::io::Read;
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
-use super::cache::store_cached_index;
+use super::cache::{cache_dir, store_cached_index};
 use super::index::{FeedEntry, MAX_INDEX_BYTES, parse_index};
 
 pub(crate) const DEFAULT_INDEX_URL: &str = "https://raw.githubusercontent.com/Born2BSalty/Born2BSaltys_Infinity_Orchestrator/main/gallery/index.json";
-pub(crate) const URL_ENV_VAR: &str = "BIO_GALLERY_INDEX_URL";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -22,21 +22,24 @@ pub(crate) enum FetchOutcome {
 }
 
 #[must_use]
-pub(crate) fn index_url() -> String {
-    match std::env::var(URL_ENV_VAR) {
-        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
-        _ => DEFAULT_INDEX_URL.to_string(),
+pub(crate) fn index_url(override_url: &str) -> String {
+    let trimmed = override_url.trim();
+    if trimmed.is_empty() {
+        DEFAULT_INDEX_URL.to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
 #[must_use]
-pub(crate) fn start_fetch(etag: Option<String>) -> Receiver<FetchOutcome> {
+pub(crate) fn start_fetch(etag: Option<String>, override_url: &str) -> Receiver<FetchOutcome> {
     let (tx, rx) = mpsc::channel::<FetchOutcome>();
+    let cache_dir = cache_dir();
+    let url = index_url(override_url);
     let spawn_result = thread::Builder::new()
         .name("gallery-feed-fetch".to_string())
         .spawn(move || {
-            let url = index_url();
-            let outcome = fetch_once(&url, etag.as_deref());
+            let outcome = fetch_once(&url, etag.as_deref(), cache_dir.as_deref());
             let _ = tx.send(outcome);
         });
     if let Err(err) = spawn_result {
@@ -49,7 +52,7 @@ pub(crate) fn start_fetch(etag: Option<String>) -> Receiver<FetchOutcome> {
     rx
 }
 
-fn fetch_once(url: &str, etag: Option<&str>) -> FetchOutcome {
+fn fetch_once(url: &str, etag: Option<&str>, cache_dir: Option<&Path>) -> FetchOutcome {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(CONNECT_TIMEOUT)
         .timeout(TOTAL_TIMEOUT)
@@ -73,7 +76,7 @@ fn fetch_once(url: &str, etag: Option<&str>) -> FetchOutcome {
             if let Err(err) = read_result {
                 return FetchOutcome::Failed(format!("gallery index read failed: {err}"));
             }
-            interpret_response(status, etag.as_deref(), &body)
+            interpret_response(status, etag.as_deref(), &body, cache_dir)
         }
         Err(ureq::Error::Status(304, _)) => FetchOutcome::NotModified,
         Err(ureq::Error::Status(code, _)) => {
@@ -85,7 +88,12 @@ fn fetch_once(url: &str, etag: Option<&str>) -> FetchOutcome {
     }
 }
 
-pub(crate) fn interpret_response(status: u16, etag: Option<&str>, body: &[u8]) -> FetchOutcome {
+pub(crate) fn interpret_response(
+    status: u16,
+    etag: Option<&str>,
+    body: &[u8],
+    cache_dir: Option<&Path>,
+) -> FetchOutcome {
     if status == 304 {
         return FetchOutcome::NotModified;
     }
@@ -97,8 +105,12 @@ pub(crate) fn interpret_response(status: u16, etag: Option<&str>, body: &[u8]) -
     }
     match parse_index(body) {
         Ok(entries) => {
-            if let Some(err) = store_cached_index(body, etag) {
-                tracing::warn!("failed to store gallery index cache: {err}");
+            if let Some(dir) = cache_dir {
+                if let Some(err) = store_cached_index(dir, body, etag) {
+                    tracing::warn!("failed to store gallery index cache: {err}");
+                }
+            } else {
+                tracing::warn!("no config directory available for the gallery cache");
             }
             FetchOutcome::Fresh(entries)
         }
@@ -170,7 +182,7 @@ mod tests {
     #[test]
     fn a_304_is_not_modified_and_writes_nothing() {
         let guard = TempConfigDir::new();
-        let outcome = interpret_response(304, None, &[]);
+        let outcome = interpret_response(304, None, &[], cache_dir().as_deref());
         assert!(matches!(outcome, FetchOutcome::NotModified));
         assert!(load_cached_index().is_none());
         drop(guard);
@@ -180,7 +192,7 @@ mod tests {
     fn a_200_with_a_valid_index_is_fresh_and_cached() {
         let guard = TempConfigDir::new();
         let body = valid_index_bytes();
-        let outcome = interpret_response(200, Some("etag-value"), &body);
+        let outcome = interpret_response(200, Some("etag-value"), &body, cache_dir().as_deref());
         match outcome {
             FetchOutcome::Fresh(list) => assert_eq!(list.len(), 1),
             other => panic!("expected Fresh, got {other:?}"),
@@ -194,7 +206,7 @@ mod tests {
     #[test]
     fn a_200_with_invalid_json_fails_and_leaves_the_cache_untouched() {
         let guard = TempConfigDir::new();
-        let outcome = interpret_response(200, None, b"not json");
+        let outcome = interpret_response(200, None, b"not json", cache_dir().as_deref());
         assert!(matches!(outcome, FetchOutcome::Failed(_)));
         assert!(load_cached_index().is_none());
         drop(guard);
@@ -202,50 +214,24 @@ mod tests {
 
     #[test]
     fn a_500_fails() {
-        let outcome = interpret_response(500, None, &[]);
+        let outcome = interpret_response(500, None, &[], None);
         assert!(matches!(outcome, FetchOutcome::Failed(_)));
     }
 
     #[test]
     fn an_oversized_body_fails() {
         let body = vec![b'a'; MAX_INDEX_BYTES + 1];
-        let outcome = interpret_response(200, None, &body);
+        let outcome = interpret_response(200, None, &body, None);
         assert!(matches!(outcome, FetchOutcome::Failed(_)));
     }
 
     #[test]
-    fn index_url_prefers_the_environment_override() {
-        let previous = std::env::var(URL_ENV_VAR).ok();
-        unsafe {
-            std::env::remove_var(URL_ENV_VAR);
-        }
-        assert_eq!(index_url(), DEFAULT_INDEX_URL);
-
-        unsafe {
-            std::env::set_var(URL_ENV_VAR, "   ");
-        }
-        assert_eq!(index_url(), DEFAULT_INDEX_URL);
-
-        let unique_url = format!(
-            "https://example.invalid/gallery-index-url-test-{}",
-            std::process::id()
+    fn index_url_prefers_a_non_empty_override() {
+        assert_eq!(index_url(""), DEFAULT_INDEX_URL);
+        assert_eq!(index_url("   "), DEFAULT_INDEX_URL);
+        assert_eq!(
+            index_url(" https://example.invalid/gallery/index.json \n"),
+            "https://example.invalid/gallery/index.json"
         );
-        unsafe {
-            std::env::set_var(
-                URL_ENV_VAR,
-                format!(
-                    " {unique_url}
-"
-                ),
-            );
-        }
-        assert_eq!(index_url(), unique_url);
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var(URL_ENV_VAR, value),
-                None => std::env::remove_var(URL_ENV_VAR),
-            }
-        }
     }
 }
