@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 
 use serde::Serialize;
@@ -75,7 +75,15 @@ pub fn write_biolist(code: &str, path: &Path) -> Result<(), String> {
 
 pub fn read_share_code(path: &Path) -> Result<String, String> {
     let file = std::fs::File::open(path).map_err(|_| NOT_A_MODLIST_FILE.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|_| NOT_A_MODLIST_FILE.to_string())?;
+    read_share_code_from_reader(file)
+}
+
+pub fn read_share_code_from_bytes(bytes: &[u8]) -> Result<String, String> {
+    read_share_code_from_reader(Cursor::new(bytes))
+}
+
+fn read_share_code_from_reader<R: Read + Seek>(reader: R) -> Result<String, String> {
+    let mut archive = ZipArchive::new(reader).map_err(|_| NOT_A_MODLIST_FILE.to_string())?;
     let entry = archive
         .by_name(SHARE_CODE_ENTRY)
         .map_err(|_| NOT_A_MODLIST_FILE.to_string())?;
@@ -456,6 +464,18 @@ mod tests {
 
         write_biolist(&code, &path).expect("write");
         let read_back = read_share_code(&path).expect("read");
+
+        assert_eq!(read_back, code.trim());
+    }
+
+    #[test]
+    fn read_share_code_from_bytes_round_trips_a_built_biolist() {
+        let code =
+            crate::app::modlist_share::encode_share_payload_text(&minimal_bgee_only_payload_json())
+                .expect("encode");
+        let bytes = build_biolist(&code).expect("build biolist");
+
+        let read_back = read_share_code_from_bytes(&bytes).expect("read");
 
         assert_eq!(read_back, code.trim());
     }
