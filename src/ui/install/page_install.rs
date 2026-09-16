@@ -39,7 +39,11 @@ pub(crate) enum InstallRequest {
 pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui::Context) {
     let palette = orchestrator.theme_palette;
 
-    poll_feed(&mut orchestrator.install_screen_state, ctx);
+    poll_feed(
+        &mut orchestrator.install_screen_state,
+        ctx,
+        &orchestrator.redesign_settings.gallery_index_url,
+    );
 
     let request = match orchestrator.install_screen_state.stage {
         InstallStage::Gallery => gallery_stage(
@@ -75,12 +79,12 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
 
 const FEED_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
-fn poll_feed(state: &mut InstallScreenState, ctx: &egui::Context) {
+fn poll_feed(state: &mut InstallScreenState, ctx: &egui::Context, override_url: &str) {
     let is_gallery = state.stage == InstallStage::Gallery;
     match std::mem::replace(&mut state.gallery.fetch, FeedFetch::Applied) {
         FeedFetch::NotStarted => {
             state.gallery.fetch =
-                FeedFetch::Running(start_fetch(state.gallery.cached_etag.clone()));
+                FeedFetch::Running(start_fetch(state.gallery.cached_etag.clone(), override_url));
         }
         FeedFetch::Running(rx) => match rx.try_recv() {
             Ok(FetchOutcome::Fresh(list)) => {
@@ -1179,7 +1183,7 @@ mod tests {
             catalog::entries()
         );
 
-        poll_feed(&mut app.install_screen_state, &egui::Context::default());
+        poll_feed(&mut app.install_screen_state, &egui::Context::default(), "");
 
         assert!(matches!(
             app.install_screen_state.gallery.fetch,
@@ -1199,12 +1203,12 @@ mod tests {
         state.gallery.fetch = FeedFetch::Pending(held.clone());
         state.stage = InstallStage::Details;
 
-        poll_feed(&mut state, &egui::Context::default());
+        poll_feed(&mut state, &egui::Context::default(), "");
 
         assert!(matches!(state.gallery.fetch, FeedFetch::Pending(_)));
 
         state.stage = InstallStage::Gallery;
-        poll_feed(&mut state, &egui::Context::default());
+        poll_feed(&mut state, &egui::Context::default(), "");
 
         assert_eq!(state.gallery.entries, held);
         assert!(matches!(state.gallery.fetch, FeedFetch::Applied));

@@ -75,6 +75,8 @@ pub struct RedesignSettings {
 
     #[serde(default = "default_true")]
     pub validate_paths_on_startup: bool,
+
+    pub gallery_index_url: String,
 }
 
 const fn default_true() -> bool {
@@ -89,6 +91,7 @@ impl Default for RedesignSettings {
             language: UiLanguage::default(),
             diagnostic_mode: false,
             validate_paths_on_startup: true,
+            gallery_index_url: String::new(),
         }
     }
 }
@@ -114,11 +117,13 @@ mod tests {
         assert_eq!(s.language, UiLanguage::English);
         assert!(!s.diagnostic_mode);
         assert!(s.validate_paths_on_startup);
+        assert_eq!(s.gallery_index_url, "");
     }
 
     #[test]
     fn round_trip_populated() {
         let s = RedesignSettings {
+            gallery_index_url: "https://example.invalid/gallery/index.json".to_string(),
             user_name: "Tester".to_string(),
             theme_palette: ThemeChoice::Light,
             language: UiLanguage::French,
@@ -126,6 +131,9 @@ mod tests {
             validate_paths_on_startup: false,
         };
         let raw = serde_json::to_string_pretty(&s).expect("serialize");
+        assert!(
+            raw.contains("\"gallery_index_url\": \"https://example.invalid/gallery/index.json\"")
+        );
         let s2: RedesignSettings = serde_json::from_str(&raw).expect("deserialize");
         assert_eq!(s, s2);
     }

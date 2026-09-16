@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Born2BSalty
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::platform_defaults;
 
@@ -43,11 +43,8 @@ pub(crate) fn load_cached_index() -> Option<CachedIndex> {
 }
 
 #[must_use]
-pub(crate) fn store_cached_index(bytes: &[u8], etag: Option<&str>) -> Option<String> {
-    let Some(dir) = cache_dir() else {
-        return Some("no config directory available for the gallery cache".to_string());
-    };
-    if let Err(err) = fs::create_dir_all(&dir) {
+pub(crate) fn store_cached_index(dir: &Path, bytes: &[u8], etag: Option<&str>) -> Option<String> {
+    if let Err(err) = fs::create_dir_all(dir) {
         return Some(format!(
             "create cache directory failed for {}: {err}",
             dir.display()
@@ -137,7 +134,11 @@ mod tests {
     #[test]
     fn store_then_load_round_trips_bytes_and_etag() {
         let guard = TempConfigDir::new();
-        let error = store_cached_index(b"{\"entries\":[]}", Some("abc123"));
+        let error = store_cached_index(
+            &cache_dir().expect("cache dir"),
+            b"{\"entries\":[]}",
+            Some("abc123"),
+        );
         assert_eq!(error, None);
         let loaded = load_cached_index().expect("cache present");
         assert_eq!(loaded.bytes, b"{\"entries\":[]}");
@@ -148,8 +149,12 @@ mod tests {
     #[test]
     fn store_without_an_etag_removes_a_stale_etag_file() {
         let guard = TempConfigDir::new();
-        let _ = store_cached_index(b"{\"entries\":[]}", Some("abc123"));
-        let error = store_cached_index(b"{\"entries\":[]}", None);
+        let _ = store_cached_index(
+            &cache_dir().expect("cache dir"),
+            b"{\"entries\":[]}",
+            Some("abc123"),
+        );
+        let error = store_cached_index(&cache_dir().expect("cache dir"), b"{\"entries\":[]}", None);
         assert_eq!(error, None);
         let loaded = load_cached_index().expect("cache present");
         assert_eq!(loaded.etag, None);
@@ -170,8 +175,8 @@ mod tests {
     #[test]
     fn store_replaces_the_index_atomically() {
         let guard = TempConfigDir::new();
-        let _ = store_cached_index(b"first", None);
-        let _ = store_cached_index(b"second", None);
+        let _ = store_cached_index(&cache_dir().expect("cache dir"), b"first", None);
+        let _ = store_cached_index(&cache_dir().expect("cache dir"), b"second", None);
         let dir = cache_dir().expect("cache dir");
         let tmp_path = dir.join(format!("{INDEX_FILE_NAME}.tmp"));
         assert!(!tmp_path.exists());
