@@ -5,36 +5,14 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::app::modlist_biolist;
 use crate::app::modlist_share::preview_modlist_share_code;
 use crate::gallery_feed::index::{
-    IndexEntry, IndexFile, MAX_CODE_BYTES, game_from_index_label, index_label_for_game,
-    is_valid_id, text_field_errors, validate_cover_bytes,
+    EntryMeta, MAX_CODE_BYTES, game_from_index_label, index_label_for_game, is_valid_id,
+    text_field_errors, validate_cover_bytes,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EntryMeta {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) author: String,
-    pub(crate) description: String,
-    pub(crate) tags: Vec<String>,
-    pub(crate) game: String,
-    pub(crate) featured: bool,
-    pub(crate) version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) requirements: Option<String>,
-}
-
-#[derive(Debug, Default)]
-pub struct FolderReport {
-    pub errors: Vec<String>,
-    pub index_text: Option<String>,
-}
 
 fn subfolders(root: &Path) -> Vec<(String, PathBuf)> {
     let Ok(read_dir) = std::fs::read_dir(root) else {
@@ -106,13 +84,12 @@ fn compare_biolist(disk_bytes: &[u8], code: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_cover(cover_path: &Path) -> Result<bool, String> {
+fn validate_cover(cover_path: &Path) -> Result<(), String> {
     if !cover_path.is_file() {
-        return Ok(false);
+        return Ok(());
     }
     let bytes = std::fs::read(cover_path).map_err(|err| err.to_string())?;
-    validate_cover_bytes(&bytes)?;
-    Ok(true)
+    validate_cover_bytes(&bytes)
 }
 
 fn validate_meta_fields(id: &str, meta: &EntryMeta, seen_ids: &mut HashSet<String>) -> Vec<String> {
@@ -149,13 +126,15 @@ fn validate_meta_fields(id: &str, meta: &EntryMeta, seen_ids: &mut HashSet<Strin
     errors
 }
 
-fn build_entry_for_folder(
+fn validate_folder_content(
     id: &str,
     folder_path: &Path,
     meta: &EntryMeta,
     errors: &mut Vec<String>,
-) -> Option<IndexEntry> {
-    let game = game_from_index_label(&meta.game)?;
+) {
+    let Some(game) = game_from_index_label(&meta.game) else {
+        return;
+    };
 
     let biolist_path = folder_path.join("modlist.biolist");
     let code = match modlist_biolist::read_share_code(&biolist_path) {
@@ -173,14 +152,13 @@ fn build_entry_for_folder(
         }
     };
 
-    let mut cover = None;
-    match validate_cover(&folder_path.join("cover.png")) {
-        Ok(true) => cover = Some(format!("{id}/cover.png")),
-        Ok(false) => {}
-        Err(err) => errors.push(format!("{id}: {err}")),
+    if let Err(err) = validate_cover(&folder_path.join("cover.png")) {
+        errors.push(format!("{id}: {err}"));
     }
 
-    let code = code?;
+    let Some(code) = code else {
+        return;
+    };
 
     match preview_modlist_share_code(&code) {
         Ok(preview) => {
@@ -208,27 +186,12 @@ fn build_entry_for_folder(
         }
         Err(err) => errors.push(format!("{id}: {err}")),
     }
-
-    Some(IndexEntry {
-        id: meta.id.clone(),
-        name: meta.name.clone(),
-        author: meta.author.clone(),
-        description: meta.description.clone(),
-        tags: meta.tags.clone(),
-        game: meta.game.clone(),
-        featured: meta.featured,
-        version: meta.version.clone(),
-        requirements: meta.requirements.clone(),
-        biolist: format!("{id}/modlist.biolist"),
-        cover,
-    })
 }
 
-#[must_use]
-pub fn build_index(root: &Path) -> FolderReport {
+pub fn check_folder(root: &Path) -> Result<usize, Vec<String>> {
     let mut errors = Vec::new();
-    let mut entries = Vec::new();
     let mut seen_ids = HashSet::new();
+    let mut count = 0usize;
 
     for (id, folder_path) in subfolders(root) {
         let entry_path = folder_path.join("entry.json");
@@ -249,60 +212,18 @@ pub fn build_index(root: &Path) -> FolderReport {
 
         let errors_before = errors.len();
         errors.extend(validate_meta_fields(&id, &meta, &mut seen_ids));
-        let candidate = build_entry_for_folder(&id, &folder_path, &meta, &mut errors);
+        validate_folder_content(&id, &folder_path, &meta, &mut errors);
 
-        if errors.len() == errors_before
-            && let Some(entry) = candidate
-        {
-            entries.push(entry);
+        if errors.len() == errors_before {
+            count += 1;
         }
     }
 
     if errors.is_empty() {
-        let index = IndexFile { entries };
-        FolderReport {
-            errors,
-            index_text: Some(render_index(&index)),
-        }
+        Ok(count)
     } else {
-        FolderReport {
-            errors,
-            index_text: None,
-        }
+        Err(errors)
     }
-}
-
-pub(crate) fn render_index(index: &IndexFile) -> String {
-    let mut entries = index.entries.clone();
-    entries.sort_by(|left, right| left.id.cmp(&right.id));
-    let sorted = IndexFile { entries };
-    let mut text = serde_json::to_string_pretty(&sorted).unwrap_or_default();
-    text.push('\n');
-    text
-}
-
-pub fn check_index(root: &Path) -> Result<usize, Vec<String>> {
-    let report = build_index(root);
-    if !report.errors.is_empty() {
-        return Err(report.errors);
-    }
-    let Some(index_text) = report.index_text else {
-        return Err(vec![
-            "index.json is stale: run gallery-index build".to_string(),
-        ]);
-    };
-    let committed = std::fs::read_to_string(root.join("index.json"))
-        .ok()
-        .map(|text| text.replace("\r\n", "\n"));
-    if committed.as_deref() != Some(index_text.as_str()) {
-        return Err(vec![
-            "index.json is stale: run gallery-index build".to_string(),
-        ]);
-    }
-    let parsed: IndexFile = serde_json::from_str(&index_text).unwrap_or(IndexFile {
-        entries: Vec::new(),
-    });
-    Ok(parsed.entries.len())
 }
 
 #[cfg(test)]
@@ -374,12 +295,10 @@ mod tests {
     }
 
     #[test]
-    fn a_valid_folder_builds_one_entry() {
+    fn a_valid_folder_checks_as_one_entry() {
         let root = TempRoot::new();
         write_valid_entry(&root, "eet-essentials");
-        let report = build_index(&root.0);
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
-        assert!(report.index_text.is_some());
+        assert_eq!(check_folder(&root.0), Ok(1));
     }
 
     #[test]
@@ -387,10 +306,11 @@ mod tests {
         let root = TempRoot::new();
         let code = catalog::entries()[0].code.clone();
         write_entry_with(&root, "folder-name", "different-id", "EET", &code);
-        let report = build_index(&root.0);
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
         assert!(
-            report
-                .errors
+            errors
                 .iter()
                 .any(|err| err.contains("does not match the folder name"))
         );
@@ -401,13 +321,10 @@ mod tests {
         let root = TempRoot::new();
         let code = catalog::entries()[0].code.clone();
         write_entry_with(&root, "bad-game", "bad-game", "SOMEGAME", &code);
-        let report = build_index(&root.0);
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|err| err.contains("is not one of BGEE"))
-        );
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
+        assert!(errors.iter().any(|err| err.contains("is not one of BGEE")));
     }
 
     #[test]
@@ -415,10 +332,11 @@ mod tests {
         let root = TempRoot::new();
         let code = bgee_code();
         write_entry_with(&root, "wrong-game", "wrong-game", "EET", &code);
-        let report = build_index(&root.0);
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
         assert!(
-            report
-                .errors
+            errors
                 .iter()
                 .any(|err| err.contains("does not match the code's game"))
         );
@@ -436,13 +354,10 @@ mod tests {
         std::fs::write(dir.join("entry.json"), entry_json).expect("write entry.json");
         let bytes = modlist_biolist::build_biolist(&code).expect("build biolist");
         std::fs::write(dir.join("modlist.biolist"), bytes).expect("write modlist.biolist");
-        let report = build_index(&root.0);
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|err| err.contains("description must be"))
-        );
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
+        assert!(errors.iter().any(|err| err.contains("description must be")));
     }
 
     #[test]
@@ -454,13 +369,10 @@ mod tests {
         std::fs::write(dir.join("entry.json"), entry_json).expect("write entry.json");
         let bytes = modlist_biolist::build_biolist(&code).expect("build biolist");
         std::fs::write(dir.join("modlist.biolist"), bytes).expect("write modlist.biolist");
-        let report = build_index(&root.0);
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|err| err.contains("at most 6 tags"))
-        );
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
+        assert!(errors.iter().any(|err| err.contains("at most 6 tags")));
     }
 
     #[test]
@@ -469,13 +381,10 @@ mod tests {
         let dir = root.entry_dir("bad-key");
         let entry_json = "{\"id\":\"bad-key\",\"name\":\"Name\",\"author\":\"Author\",\"description\":\"A description.\",\"tags\":[],\"game\":\"EET\",\"featured\":true,\"version\":\"1.0.0\",\"min_bio_version\":\"1\"}";
         std::fs::write(dir.join("entry.json"), entry_json).expect("write entry.json");
-        let report = build_index(&root.0);
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|err| err.contains("fails to parse"))
-        );
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
+        assert!(errors.iter().any(|err| err.contains("fails to parse")));
     }
 
     #[test]
@@ -484,8 +393,7 @@ mod tests {
         let dir = root.entry_dir("no-biolist");
         let entry_json = "{\"id\":\"no-biolist\",\"name\":\"Name\",\"author\":\"Author\",\"description\":\"A description.\",\"tags\":[],\"game\":\"EET\",\"featured\":true,\"version\":\"1.0.0\"}";
         std::fs::write(dir.join("entry.json"), entry_json).expect("write entry.json");
-        let report = build_index(&root.0);
-        assert!(!report.errors.is_empty());
+        assert!(check_folder(&root.0).is_err());
     }
 
     #[test]
@@ -514,10 +422,11 @@ mod tests {
         std::fs::write(&biolist_path, tampered_bytes).expect("write tampered biolist");
         let _ = code;
 
-        let report = build_index(&root.0);
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
         assert!(
-            report
-                .errors
+            errors
                 .iter()
                 .any(|err| err.contains("does not match its code"))
         );
@@ -529,8 +438,10 @@ mod tests {
         write_valid_entry(&root, "oversized-cover");
         let dir = root.0.join("oversized-cover");
         std::fs::write(dir.join("cover.png"), vec![0u8; 200 * 1024]).expect("write cover");
-        let report = build_index(&root.0);
-        assert!(report.errors.iter().any(|err| err.contains("over 150 KB")));
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
+        assert!(errors.iter().any(|err| err.contains("over 150 KB")));
     }
 
     #[test]
@@ -539,101 +450,18 @@ mod tests {
         write_valid_entry(&root, "wrong-aspect-cover");
         let dir = root.0.join("wrong-aspect-cover");
         std::fs::write(dir.join("cover.png"), cover_bytes(460, 100)).expect("write cover");
-        let report = build_index(&root.0);
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|err| err.contains("not within 2%"))
-        );
+        let Err(errors) = check_folder(&root.0) else {
+            panic!("expected errors");
+        };
+        assert!(errors.iter().any(|err| err.contains("not within 2%")));
     }
 
     #[test]
-    fn a_good_cover_is_referenced_by_path() {
+    fn a_good_cover_passes_the_check() {
         let root = TempRoot::new();
         write_valid_entry(&root, "good-cover");
         let dir = root.0.join("good-cover");
         std::fs::write(dir.join("cover.png"), cover_bytes(460, 215)).expect("write cover");
-        let report = build_index(&root.0);
-        assert!(report.errors.is_empty(), "{:?}", report.errors);
-        let index_text = report.index_text.expect("index text present");
-        assert!(index_text.contains("\"cover\": \"good-cover/cover.png\""));
-    }
-
-    #[test]
-    fn check_reports_a_missing_index_as_stale() {
-        let root = TempRoot::new();
-        write_valid_entry(&root, "eet-essentials");
-        let result = check_index(&root.0);
-        assert_eq!(
-            result,
-            Err(vec![
-                "index.json is stale: run gallery-index build".to_string()
-            ])
-        );
-    }
-
-    #[test]
-    fn check_reports_a_differing_index_as_stale() {
-        let root = TempRoot::new();
-        write_valid_entry(&root, "eet-essentials");
-        std::fs::write(root.0.join("index.json"), "{}").expect("write stale index");
-        let result = check_index(&root.0);
-        assert_eq!(
-            result,
-            Err(vec![
-                "index.json is stale: run gallery-index build".to_string()
-            ])
-        );
-    }
-
-    #[test]
-    fn check_passes_a_fresh_index() {
-        let root = TempRoot::new();
-        write_valid_entry(&root, "eet-essentials");
-        let report = build_index(&root.0);
-        let index_text = report.index_text.expect("index text present");
-        std::fs::write(root.0.join("index.json"), &index_text).expect("write index");
-        let result = check_index(&root.0);
-        assert_eq!(result, Ok(1));
-    }
-
-    #[test]
-    fn render_index_sorts_by_id_and_ends_with_a_newline() {
-        let index = IndexFile {
-            entries: vec![
-                IndexEntry {
-                    id: "zulu".to_string(),
-                    name: "Zulu".to_string(),
-                    author: "Author".to_string(),
-                    description: "A description.".to_string(),
-                    tags: vec![],
-                    game: "EET".to_string(),
-                    featured: true,
-                    version: "1.0.0".to_string(),
-                    requirements: None,
-                    biolist: "zulu/modlist.biolist".to_string(),
-                    cover: None,
-                },
-                IndexEntry {
-                    id: "alpha".to_string(),
-                    name: "Alpha".to_string(),
-                    author: "Author".to_string(),
-                    description: "A description.".to_string(),
-                    tags: vec![],
-                    game: "EET".to_string(),
-                    featured: true,
-                    version: "1.0.0".to_string(),
-                    requirements: None,
-                    biolist: "alpha/modlist.biolist".to_string(),
-                    cover: None,
-                },
-            ],
-        };
-        let text = render_index(&index);
-        let alpha_index = text.find("\"alpha\"").expect("alpha present");
-        let zulu_index = text.find("\"zulu\"").expect("zulu present");
-        assert!(alpha_index < zulu_index);
-        assert!(text.ends_with('\n'));
+        assert_eq!(check_folder(&root.0), Ok(1));
     }
 }

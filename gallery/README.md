@@ -7,14 +7,13 @@ This folder is the source of the curated modlist gallery BIO shows on the Instal
 ```
 gallery/
   README.md
-  index.json            generated, committed
   <id>/
     entry.json           maintainer metadata
     modlist.biolist       the modlist file, exported from BIO
     cover.png             optional card art
 ```
 
-`index.json` is a lean manifest: per entry, the metadata plus the relative paths of its `modlist.biolist` and, when present, its `cover.png`. The BIO build embeds this whole folder into the exe, so a change here ships with the next release.
+The BIO build embeds every folder's `entry.json`, `modlist.biolist` and `cover.png` into the exe, and assembles the gallery from them at startup. A change here ships with the next release.
 
 ## `entry.json` fields
 
@@ -30,13 +29,14 @@ gallery/
 | `version` | the list's own version, shown on Details | free text, 1 to 20 characters |
 | `requirements` | optional; the "Requires" fact on Details | when absent, the game's default sentence is used |
 
-## Commands
+## Workflow
+
+Drop a folder (`entry.json`, `modlist.biolist`, optional `cover.png`) into `gallery/`, commit, then build BIO.
 
 ```
-cargo run --release --bin gallery-index -- build gallery
 cargo run --release --bin gallery-index -- check gallery
 ```
 
-`build` validates every folder and regenerates `index.json`. `check` runs the same validation and fails if the committed `index.json` is stale.
+`check` validates every folder; it is the same check CI runs on every pull request that touches `gallery/`.
 
 Submissions arrive on the BIO Discord; the maintainer places the file here.

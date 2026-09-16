@@ -11,7 +11,6 @@ fn write_gallery_snapshot() {
     let gallery_dir = Path::new(&manifest_dir).join("gallery");
 
     println!("cargo:rerun-if-changed=gallery");
-    println!("cargo:rerun-if-changed=gallery/index.json");
 
     let mut lines = vec!["pub(crate) static SNAPSHOT_FILES: &[(&str, &[u8])] = &[".to_string()];
 
@@ -27,12 +26,7 @@ fn write_gallery_snapshot() {
         let id = dir_entry.file_name().to_string_lossy().into_owned();
         let folder_path = dir_entry.path();
 
-        let entry_json_path = folder_path.join("entry.json");
-        if entry_json_path.is_file() {
-            println!("cargo:rerun-if-changed={}", entry_json_path.display());
-        }
-
-        for file_name in ["modlist.biolist", "cover.png"] {
+        for file_name in ["entry.json", "modlist.biolist", "cover.png"] {
             let file_path = folder_path.join(file_name);
             if !file_path.is_file() {
                 continue;
