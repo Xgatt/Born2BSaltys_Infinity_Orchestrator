@@ -324,7 +324,6 @@ mod tests {
             &overrides_text_for("bgee-vanilla-plus-no-dlc"),
             &subset(&[
                 "eefixpack",
-                "cdtweaks",
                 "HiddenGameplayOptions",
                 "LeUI",
                 "remastered_spell_icons",
@@ -338,6 +337,15 @@ mod tests {
             &subset(&["cdtweaks"]),
             "iwdee-essentials",
         );
+    }
+
+    #[test]
+    fn no_dlc_list_carries_no_cdtweaks_source_block() {
+        let no_dlc_overrides = overrides_text_for("bgee-vanilla-plus-no-dlc");
+        assert!(!no_dlc_overrides.contains("tp2 = \"cdtweaks\""));
+
+        let with_dlc_overrides = overrides_text_for("bgee-vanilla-plus");
+        assert!(with_dlc_overrides.contains("tp2 = \"cdtweaks\""));
     }
 
     fn log_lines(text: &str) -> Vec<&str> {
@@ -471,17 +479,20 @@ mod tests {
 
         let no_dlc_entry = by_id("bgee-vanilla-plus-no-dlc");
         let no_dlc_preview = preview_modlist_share_code(&no_dlc_entry.code).expect("parse");
-        assert_eq!(no_dlc_preview.bgee_entries, 65);
+        assert_eq!(no_dlc_preview.bgee_entries, 40);
 
         let no_dlc_lines = log_lines(&no_dlc_preview.bgee_log_text);
         assert!(no_dlc_lines[0].contains("SETUP-EEFIXPACK.TP2~ #0 #0"));
         assert!(no_dlc_lines[1].contains("SETUP-EEFIXPACK.TP2~ #0 #2"));
         assert!(!no_dlc_preview.bgee_log_text.contains("DLCMERGER.TP2"));
+        assert!(!no_dlc_preview.bgee_log_text.contains("CDTWEAKS"));
         assert_eq!(
             no_dlc_lines,
             vanilla_lines
                 .iter()
-                .filter(|line| !line.contains("DLCMERGER.TP2"))
+                .filter(
+                    |line| !line.contains("DLCMERGER.TP2") && !line.contains("SETUP-CDTWEAKS.TP2")
+                )
                 .copied()
                 .collect::<Vec<_>>()
         );
@@ -697,7 +708,7 @@ mod tests {
 
         let expected_no_dlc = expected_with_dlc
             .lines()
-            .filter(|line| !line.contains("DLCMERGER.TP2"))
+            .filter(|line| !line.contains("DLCMERGER.TP2") && !line.contains("SETUP-CDTWEAKS.TP2"))
             .collect::<Vec<_>>()
             .join("\n");
         let no_dlc_entry = by_id("bgee-vanilla-plus-no-dlc");
