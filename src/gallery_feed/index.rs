@@ -3,14 +3,13 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::app::modlist_biolist::read_share_code_from_bytes;
 use crate::app::modlist_share::preview_modlist_share_code;
 use crate::registry::model::Game;
 use crate::ui::install::gallery::catalog::requirements_for;
 
-pub(crate) const MAX_INDEX_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_COVER_BYTES: usize = 150 * 1024;
 pub(crate) const MAX_DESCRIPTION_CHARS: usize = 500;
 pub(crate) const MAX_NAME_CHARS: usize = 80;
@@ -23,12 +22,27 @@ pub(crate) const MIN_COVER_WIDTH: u32 = 460;
 pub(crate) const MAX_COVER_WIDTH: u32 = 920;
 const COVER_ASPECT_HEIGHT: u32 = 215;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EntryMeta {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) author: String,
+    pub(crate) description: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) game: String,
+    pub(crate) featured: bool,
+    pub(crate) version: String,
+    #[serde(default)]
+    pub(crate) requirements: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IndexFile {
     pub(crate) entries: Vec<IndexEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IndexEntry {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -38,10 +52,8 @@ pub(crate) struct IndexEntry {
     pub(crate) game: String,
     pub(crate) featured: bool,
     pub(crate) version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) requirements: Option<String>,
     pub(crate) biolist: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cover: Option<String>,
 }
 
@@ -155,20 +167,31 @@ pub(crate) fn text_field_errors(
     errors
 }
 
-pub(crate) fn parse_index(
-    bytes: &[u8],
-    resolve: &dyn Fn(&str) -> Option<&[u8]>,
-) -> Result<Vec<FeedEntry>, String> {
-    if bytes.len() > MAX_INDEX_BYTES {
-        return Err("gallery index is larger than 8 MB".to_string());
+#[must_use]
+pub(crate) fn index_entry_from_meta(folder: &str, meta: EntryMeta, has_cover: bool) -> IndexEntry {
+    IndexEntry {
+        id: meta.id,
+        name: meta.name,
+        author: meta.author,
+        description: meta.description,
+        tags: meta.tags,
+        game: meta.game,
+        featured: meta.featured,
+        version: meta.version,
+        requirements: meta.requirements,
+        biolist: format!("{folder}/modlist.biolist"),
+        cover: has_cover.then(|| format!("{folder}/cover.png")),
     }
-    let index_file: IndexFile = serde_json::from_slice(bytes)
-        .map_err(|err| format!("gallery index is not valid JSON: {err}"))?;
+}
 
+pub(crate) fn entries_from_index<'a>(
+    index: IndexFile,
+    resolve: &dyn Fn(&str) -> Option<&'a [u8]>,
+) -> Vec<FeedEntry> {
     let mut seen_ids: HashSet<String> = HashSet::new();
     let mut result = Vec::new();
 
-    for entry in index_file.entries {
+    for entry in index.entries {
         if !is_valid_id(&entry.id) || !seen_ids.insert(entry.id.clone()) {
             continue;
         }
@@ -234,7 +257,7 @@ pub(crate) fn parse_index(
 
     result.sort_by_key(|entry| (!entry.featured, entry.name.to_lowercase()));
 
-    Ok(result)
+    result
 }
 
 #[cfg(test)]
@@ -274,13 +297,12 @@ mod tests {
         buffer.into_inner()
     }
 
-    fn resolver(files: &HashMap<String, Vec<u8>>) -> impl Fn(&str) -> Option<&[u8]> {
-        let leaked: &'static HashMap<String, Vec<u8>> = Box::leak(Box::new(files.clone()));
-        move |path: &str| leaked.get(path).map(Vec::as_slice)
+    fn resolver<'a>(files: &'a HashMap<String, Vec<u8>>) -> impl Fn(&str) -> Option<&'a [u8]> + 'a {
+        move |path: &str| files.get(path).map(Vec::as_slice)
     }
 
     #[test]
-    fn parse_index_accepts_a_valid_two_entry_index() {
+    fn entries_from_index_accepts_a_valid_two_entry_index() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -304,13 +326,12 @@ mod tests {
                 ),
             ],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert_eq!(result.len(), 2);
     }
 
     #[test]
-    fn parse_index_drops_an_entry_with_a_bad_id() {
+    fn entries_from_index_drops_an_entry_with_a_bad_id() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -323,13 +344,12 @@ mod tests {
                 entry("", "Three", true, "EET", "entries/one.biolist"),
             ],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_a_duplicate_id_keeping_the_first() {
+    fn entries_from_index_drops_a_duplicate_id_keeping_the_first() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -340,14 +360,13 @@ mod tests {
                 entry("dup-id", "Second", true, "EET", "entries/one.biolist"),
             ],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "First");
     }
 
     #[test]
-    fn parse_index_drops_an_unknown_game_label() {
+    fn entries_from_index_drops_an_unknown_game_label() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -361,13 +380,12 @@ mod tests {
                 "entries/one.biolist",
             )],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_entry_with_an_oversized_code() {
+    fn entries_from_index_drops_an_entry_with_an_oversized_code() {
         let oversized_code = "x".repeat(MAX_CODE_BYTES + 1);
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
@@ -381,13 +399,12 @@ mod tests {
         let index = IndexFile {
             entries: vec![entry("big-code", "One", true, "EET", "entries/one.biolist")],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_entry_with_text_over_the_limits() {
+    fn entries_from_index_drops_an_entry_with_text_over_the_limits() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -412,14 +429,13 @@ mod tests {
                 entry("fine", "Three", true, "EET", "entries/one.biolist"),
             ],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "fine");
     }
 
     #[test]
-    fn parse_index_drops_an_entry_whose_code_does_not_preview() {
+    fn entries_from_index_drops_an_entry_whose_code_does_not_preview() {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
         writer
@@ -432,13 +448,12 @@ mod tests {
         let index = IndexFile {
             entries: vec![entry("bad-code", "One", true, "EET", "entries/one.biolist")],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_entry_whose_game_does_not_match_its_code() {
+    fn entries_from_index_drops_an_entry_whose_game_does_not_match_its_code() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -452,13 +467,12 @@ mod tests {
                 "entries/one.biolist",
             )],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_entry_whose_biolist_is_missing() {
+    fn entries_from_index_drops_an_entry_whose_biolist_is_missing() {
         let files: HashMap<String, Vec<u8>> = HashMap::new();
         let index = IndexFile {
             entries: vec![entry(
@@ -469,13 +483,12 @@ mod tests {
                 "entries/missing.biolist",
             )],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_entry_whose_biolist_is_not_a_zip() {
+    fn entries_from_index_drops_an_entry_whose_biolist_is_not_a_zip() {
         let mut files = HashMap::new();
         files.insert(
             "entries/one.biolist".to_string(),
@@ -490,13 +503,12 @@ mod tests {
                 "entries/one.biolist",
             )],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_oversized_cover() {
+    fn entries_from_index_drops_an_oversized_cover() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -510,13 +522,12 @@ mod tests {
         let index = IndexFile {
             entries: vec![fixture],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_a_cover_with_the_wrong_aspect() {
+    fn entries_from_index_drops_a_cover_with_the_wrong_aspect() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -527,13 +538,12 @@ mod tests {
         let index = IndexFile {
             entries: vec![fixture],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_keeps_a_cover_at_460_by_215() {
+    fn entries_from_index_keeps_a_cover_at_460_by_215() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -544,14 +554,13 @@ mod tests {
         let index = IndexFile {
             entries: vec![fixture],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert_eq!(result.len(), 1);
         assert!(result[0].cover_png.is_some());
     }
 
     #[test]
-    fn parse_index_keeps_a_cover_referenced_by_path() {
+    fn entries_from_index_keeps_a_cover_referenced_by_path() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -562,8 +571,7 @@ mod tests {
         let index = IndexFile {
             entries: vec![fixture],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0].cover_png.as_deref(),
@@ -572,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_index_drops_a_cover_narrower_than_460() {
+    fn entries_from_index_drops_a_cover_narrower_than_460() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -583,13 +591,12 @@ mod tests {
         let index = IndexFile {
             entries: vec![fixture],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_drops_an_entry_whose_cover_file_is_missing() {
+    fn entries_from_index_drops_an_entry_whose_cover_file_is_missing() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -599,28 +606,12 @@ mod tests {
         let index = IndexFile {
             entries: vec![fixture],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert!(result.is_empty());
     }
 
     #[test]
-    fn parse_index_errors_on_invalid_json() {
-        let files: HashMap<String, Vec<u8>> = HashMap::new();
-        let result = parse_index(b"not json", &resolver(&files));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_index_errors_on_an_oversized_index() {
-        let files: HashMap<String, Vec<u8>> = HashMap::new();
-        let bytes = vec![b'a'; MAX_INDEX_BYTES + 1];
-        let result = parse_index(&bytes, &resolver(&files));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_index_sorts_featured_first_then_name_case_insensitive() {
+    fn entries_from_index_sorts_featured_first_then_name_case_insensitive() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
         let mut files = HashMap::new();
@@ -633,8 +624,7 @@ mod tests {
                 entry("b-entry", "banana", true, "EET", "entries/one.biolist"),
             ],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         let names: Vec<&str> = result.iter().map(|entry| entry.name.as_str()).collect();
         assert_eq!(names, vec!["Apple", "banana", "Mango", "zebra"]);
     }
@@ -648,9 +638,30 @@ mod tests {
         let index = IndexFile {
             entries: vec![entry("no-reqs", "One", true, "EET", "entries/one.biolist")],
         };
-        let bytes = serde_json::to_vec(&index).expect("serialize");
-        let result = parse_index(&bytes, &resolver(&files)).expect("parse ok");
+        let result = entries_from_index(index, &resolver(&files));
         assert_eq!(result[0].requirements, requirements_for(Game::EET));
+    }
+
+    #[test]
+    fn index_entry_from_meta_sets_the_paths() {
+        let meta = EntryMeta {
+            id: "an-id".to_string(),
+            name: "Name".to_string(),
+            author: "Author".to_string(),
+            description: "A description.".to_string(),
+            tags: vec!["Tag".to_string()],
+            game: "EET".to_string(),
+            featured: true,
+            version: "1.0.0".to_string(),
+            requirements: None,
+        };
+        let with_cover = index_entry_from_meta("an-id", meta.clone(), true);
+        assert_eq!(with_cover.biolist, "an-id/modlist.biolist");
+        assert_eq!(with_cover.cover, Some("an-id/cover.png".to_string()));
+
+        let without_cover = index_entry_from_meta("an-id", meta, false);
+        assert_eq!(without_cover.biolist, "an-id/modlist.biolist");
+        assert_eq!(without_cover.cover, None);
     }
 
     #[test]
