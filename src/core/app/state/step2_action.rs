@@ -18,6 +18,7 @@ pub enum Step2Action {
     CheckExactLogModList,
     PreviewUpdateSelected,
     PreviewUpdateSelectedMod,
+    PreviewUpdatePopupMod,
     DownloadUpdates,
     AcceptLatestForExactVersionMisses,
     OpenSelectedReadme(String),
