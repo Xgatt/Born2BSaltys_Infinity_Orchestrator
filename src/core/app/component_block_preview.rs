@@ -13,15 +13,17 @@ pub(crate) fn load_component_block_preview(tp2_path: &str, component_id: &str) -
     let lines: Vec<&str> = tp2_text.lines().collect();
     let wanted = normalize_component_id(component_id)?;
     let starts = component_block_starts(&lines);
+    let kinds = classify_lines(&lines);
     for (position, &start) in starts.iter().enumerate() {
         let end = starts.get(position + 1).copied().unwrap_or(lines.len());
-        let block_id = lines[start..end]
-            .iter()
-            .find_map(|entry| designated_id_in_code(entry))
+        let block_id = (start..end)
+            .filter(|&index| kinds[index] != LineKind::CommentOnly)
+            .find_map(|index| designated_id_in_code(lines[index]))
             .unwrap_or_else(|| position.to_string());
         if block_id == wanted {
-            let display_start = component_block_start(&lines, start);
-            let display_end = component_block_end(&lines, display_start, end);
+            let previous_begin = position.checked_sub(1).map(|prev| starts[prev]);
+            let display_start = component_block_start(&kinds, previous_begin, start);
+            let display_end = component_block_end(&kinds, start, end);
             let preview = lines[display_start..display_end].join("\n");
             return Some(preview);
         }
@@ -84,35 +86,86 @@ fn component_block_starts(lines: &[&str]) -> Vec<usize> {
     starts
 }
 
-fn component_block_start(lines: &[&str], block_start: usize) -> usize {
-    let mut start = block_start;
-    while start > 0 {
-        let prev = lines[start - 1].trim();
-        if prev.is_empty() {
-            break;
-        }
-        if is_component_header_comment(prev) {
-            start -= 1;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Blank,
+    CommentOnly,
+    Code,
+}
+
+fn classify_lines(lines: &[&str]) -> Vec<LineKind> {
+    let mut kinds = Vec::with_capacity(lines.len());
+    let mut in_block_comment = false;
+    for &line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            kinds.push(LineKind::Blank);
             continue;
         }
-        break;
+        if in_block_comment {
+            if let Some(pos) = trimmed.find("*/") {
+                in_block_comment = false;
+                let remainder = trimmed[pos + 2..].trim();
+                kinds.push(if remainder.is_empty() {
+                    LineKind::CommentOnly
+                } else {
+                    LineKind::Code
+                });
+            } else {
+                kinds.push(LineKind::CommentOnly);
+            }
+            continue;
+        }
+        if trimmed.starts_with("//") {
+            kinds.push(LineKind::CommentOnly);
+            continue;
+        }
+        if trimmed.starts_with("/*") {
+            if let Some(pos) = trimmed.find("*/") {
+                let remainder = trimmed[pos + 2..].trim();
+                kinds.push(if remainder.is_empty() {
+                    LineKind::CommentOnly
+                } else {
+                    LineKind::Code
+                });
+            } else {
+                in_block_comment = true;
+                kinds.push(LineKind::CommentOnly);
+            }
+            continue;
+        }
+        kinds.push(LineKind::Code);
+    }
+    kinds
+}
+
+fn component_block_start(kinds: &[LineKind], previous_begin: Option<usize>, begin: usize) -> usize {
+    let floor = previous_begin.unwrap_or(0);
+    let mut last_code = previous_begin;
+    let mut cursor = begin;
+    while cursor > floor {
+        cursor -= 1;
+        if kinds[cursor] == LineKind::Code {
+            last_code = Some(cursor);
+            break;
+        }
+    }
+    let mut start = last_code.map_or(0, |index| index + 1);
+    while start < begin && kinds[start] == LineKind::Blank {
+        start += 1;
     }
     start
 }
 
-fn component_block_end(lines: &[&str], block_start: usize, block_end: usize) -> usize {
-    let mut end = block_end;
-    while end > block_start && lines[end - 1].trim().is_empty() {
-        end -= 1;
+fn component_block_end(kinds: &[LineKind], begin: usize, limit: usize) -> usize {
+    let mut end = begin + 1;
+    for index in (begin..limit).rev() {
+        if kinds[index] == LineKind::Code {
+            end = index + 1;
+            break;
+        }
     }
     end
-}
-
-fn is_component_header_comment(line: &str) -> bool {
-    line.starts_with("//")
-        || line.starts_with("/*")
-        || line.starts_with('*')
-        || line.starts_with("*/")
 }
 
 #[cfg(test)]
@@ -304,12 +357,101 @@ mod tests {
     }
 
     #[test]
-    fn header_comments_absorbed_only_while_contiguous() {
+    fn header_comments_across_a_blank_line_belong_to_the_component() {
         let fixture =
-            TestFixture::new("// first comment\n\n// second comment\nBEGIN ~A~\nbody a\n");
+            TestFixture::new("// first comment\n\n// second comment\n\nBEGIN ~A~\nbody a\n");
         let path = fixture.tp2_path_str();
         let block = load_component_block_preview(&path, "0").unwrap();
-        assert!(block.contains("// second comment"));
-        assert!(!block.contains("// first comment"));
+        assert!(block.starts_with("// first comment"));
+    }
+
+    #[test]
+    fn cdtweaks_layout_gives_each_component_its_own_banner() {
+        let fixture = TestFixture::new(
+            r"/////\\\\\/////\\\\\
+///// Remove Helmet Animations \\\\\
+/////\\\\\/////\\\\\
+
+BEGIN @1000 DESIGNATED 10
+GROUP @11
+LABEL ~cd_tweaks_remove_helmets~
+
+/////\\\\\/////\\\\\
+///// Change Imoen's Avatar \\\\\
+/////\\\\\/////\\\\\
+
+BEGIN @2000 DESIGNATED 20
+GROUP @11
+LABEL ~cd_tweaks_imoen~
+",
+        );
+        let path = fixture.tp2_path_str();
+        let banner_border = r"/////\\\\\/////\\\\\";
+        let block_10 = load_component_block_preview(&path, "10").unwrap();
+        assert!(block_10.starts_with(banner_border));
+        assert!(block_10.ends_with("LABEL ~cd_tweaks_remove_helmets~"));
+        assert!(!block_10.contains("Imoen"));
+        let block_20 = load_component_block_preview(&path, "20").unwrap();
+        assert!(block_20.starts_with(banner_border));
+        assert!(block_20.contains("cd_tweaks_imoen"));
+    }
+
+    #[test]
+    fn block_comment_banner_belongs_to_the_next_component() {
+        let fixture =
+            TestFixture::new("BEGIN ~A~\nbody a\n\n/*\n banner\n*/\n\nBEGIN ~B~\nbody b\n");
+        let path = fixture.tp2_path_str();
+        let block_a = load_component_block_preview(&path, "0").unwrap();
+        assert_eq!(block_a, "BEGIN ~A~\nbody a");
+        let block_b = load_component_block_preview(&path, "1").unwrap();
+        assert!(block_b.starts_with("/*"));
+        assert!(block_b.ends_with("body b"));
+    }
+
+    #[test]
+    fn trailing_comments_at_end_of_file_are_dropped() {
+        let fixture = TestFixture::new("BEGIN ~A~\nbody a\n\n// the end\n");
+        let path = fixture.tp2_path_str();
+        let block = load_component_block_preview(&path, "0").unwrap();
+        assert_eq!(block, "BEGIN ~A~\nbody a");
+    }
+
+    #[test]
+    fn interior_comments_stay_in_the_body() {
+        let fixture = TestFixture::new(
+            "BEGIN ~A~\n// step one\nCOPY a b\n\n// step two\nCOPY c d\n\nBEGIN ~B~\n",
+        );
+        let path = fixture.tp2_path_str();
+        let block = load_component_block_preview(&path, "0").unwrap();
+        assert!(block.contains("// step one"));
+        assert!(block.contains("// step two"));
+        assert!(block.ends_with("COPY c d"));
+    }
+
+    #[test]
+    fn first_component_takes_the_file_header_comments() {
+        let fixture = TestFixture::new("// header\n\nBEGIN ~A~\nbody\n");
+        let path = fixture.tp2_path_str();
+        let block = load_component_block_preview(&path, "0").unwrap();
+        assert!(block.starts_with("// header"));
+    }
+
+    #[test]
+    fn component_with_no_comments_is_unchanged() {
+        let fixture =
+            TestFixture::new("BEGIN ~A~\nbodyA\n\nBEGIN ~B~\nbodyB\n\nBEGIN ~C~\nbodyC\n");
+        let path = fixture.tp2_path_str();
+        assert_eq!(
+            load_component_block_preview(&path, "0").unwrap(),
+            "BEGIN ~A~\nbodyA"
+        );
+        assert_eq!(
+            load_component_block_preview(&path, "1").unwrap(),
+            "BEGIN ~B~\nbodyB"
+        );
+        assert_eq!(
+            load_component_block_preview(&path, "2").unwrap(),
+            "BEGIN ~C~\nbodyC"
+        );
     }
 }
