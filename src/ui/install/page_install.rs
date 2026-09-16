@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
-use std::sync::Arc;
-use std::sync::mpsc::TryRecvError;
-
 use eframe::egui;
 use tracing::warn;
 
 use crate::app::modlist_share::preview_modlist_share_code;
-use crate::gallery_feed::fetch::{FetchOutcome, start_fetch};
 use crate::gallery_feed::index::FeedEntry;
 use crate::install_runtime::fork_pipeline_arm::{self, ForkArmRequest};
 use crate::install_runtime::{fork_route, start_hooks};
 use crate::registry::share_export;
 use crate::ui::install::drawers;
+use crate::ui::install::gallery::catalog;
 use crate::ui::install::stage_details::{self, DetailsHeader, DetailsOutcome};
 use crate::ui::install::stage_downloading::{self, DownloadScreenCopy, DownloadingOutcome};
 use crate::ui::install::stage_fork_download::{self, ForkDownloadOutcome};
@@ -22,8 +19,7 @@ use crate::ui::install::stage_installing::{self, StageInstallingOutcome};
 use crate::ui::install::stage_paste::{self, PasteOutcome};
 use crate::ui::install::stage_review;
 use crate::ui::install::state_install::{
-    DrawerKind, DrawerState, FeedFetch, InstallScreenState, InstallStage, PipelineKind,
-    ReviewOrigin,
+    DrawerKind, DrawerState, InstallScreenState, InstallStage, PipelineKind, ReviewOrigin,
 };
 use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
@@ -38,12 +34,6 @@ pub(crate) enum InstallRequest {
 
 pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui::Context) {
     let palette = orchestrator.theme_palette;
-
-    poll_feed(
-        &mut orchestrator.install_screen_state,
-        ctx,
-        &orchestrator.redesign_settings.gallery_index_url,
-    );
 
     let request = match orchestrator.install_screen_state.stage {
         InstallStage::Gallery => gallery_stage(
@@ -74,48 +64,6 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
             }
         }
         ctx.request_repaint();
-    }
-}
-
-const FEED_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
-
-fn poll_feed(state: &mut InstallScreenState, ctx: &egui::Context, override_url: &str) {
-    let is_gallery = state.stage == InstallStage::Gallery;
-    match std::mem::replace(&mut state.gallery.fetch, FeedFetch::Applied) {
-        FeedFetch::NotStarted => {
-            state.gallery.fetch =
-                FeedFetch::Running(start_fetch(state.gallery.cached_etag.clone(), override_url));
-        }
-        FeedFetch::Running(rx) => match rx.try_recv() {
-            Ok(FetchOutcome::Fresh(list)) => {
-                if is_gallery {
-                    state.gallery.entries = Arc::new(list);
-                    state.gallery.fetch = FeedFetch::Applied;
-                } else {
-                    state.gallery.fetch = FeedFetch::Pending(Arc::new(list));
-                }
-            }
-            Ok(FetchOutcome::Failed(err)) => {
-                tracing::debug!(target = "orchestrator", "gallery feed fetch failed: {err}");
-                state.gallery.fetch = FeedFetch::Applied;
-            }
-            Ok(FetchOutcome::NotModified) | Err(TryRecvError::Disconnected) => {
-                state.gallery.fetch = FeedFetch::Applied;
-            }
-            Err(TryRecvError::Empty) => {
-                ctx.request_repaint_after(FEED_POLL_INTERVAL);
-                state.gallery.fetch = FeedFetch::Running(rx);
-            }
-        },
-        FeedFetch::Pending(list) => {
-            if is_gallery {
-                state.gallery.entries = list;
-                state.gallery.fetch = FeedFetch::Applied;
-            } else {
-                state.gallery.fetch = FeedFetch::Pending(list);
-            }
-        }
-        other => state.gallery.fetch = other,
     }
 }
 
@@ -501,7 +449,7 @@ fn console_back_request(
 
 fn selected_entry(state: &InstallScreenState) -> Option<&FeedEntry> {
     let id = state.gallery.selected.as_deref()?;
-    state.gallery.entries.iter().find(|entry| entry.id == id)
+    catalog::entries().iter().find(|entry| entry.id == id)
 }
 
 fn open_details_from_gallery_entry(
@@ -557,7 +505,6 @@ pub(crate) fn refresh_source_compat_issue(
 mod tests {
 
     use super::*;
-    use crate::ui::install::gallery::catalog;
 
     fn orch_for_install_test() -> OrchestratorApp {
         OrchestratorApp::new_isolated_for_test("pageinstalltest")
@@ -1168,49 +1115,5 @@ mod tests {
         after_included_mods(&IncludedModsOutcome::Install, &mut drawer);
 
         assert_eq!(drawer.open, Some(DrawerKind::Install));
-    }
-
-    #[test]
-    fn feed_fetch_stays_disabled_in_the_isolated_app() {
-        let mut app = orch_for_install_test();
-
-        assert!(matches!(
-            app.install_screen_state.gallery.fetch,
-            FeedFetch::Disabled
-        ));
-        assert_eq!(
-            app.install_screen_state.gallery.entries.as_slice(),
-            catalog::entries()
-        );
-
-        poll_feed(&mut app.install_screen_state, &egui::Context::default(), "");
-
-        assert!(matches!(
-            app.install_screen_state.gallery.fetch,
-            FeedFetch::Disabled
-        ));
-    }
-
-    #[test]
-    fn a_fresh_fetch_result_is_held_while_details_is_showing() {
-        let mut state = InstallScreenState::default();
-        let held = std::sync::Arc::new(vec![
-            catalog::entries()
-                .first()
-                .expect("the catalog is not empty")
-                .clone(),
-        ]);
-        state.gallery.fetch = FeedFetch::Pending(held.clone());
-        state.stage = InstallStage::Details;
-
-        poll_feed(&mut state, &egui::Context::default(), "");
-
-        assert!(matches!(state.gallery.fetch, FeedFetch::Pending(_)));
-
-        state.stage = InstallStage::Gallery;
-        poll_feed(&mut state, &egui::Context::default(), "");
-
-        assert_eq!(state.gallery.entries, held);
-        assert!(matches!(state.gallery.fetch, FeedFetch::Applied));
     }
 }

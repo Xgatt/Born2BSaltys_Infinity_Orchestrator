@@ -455,10 +455,6 @@ impl OrchestratorApp {
                 crate::ui::settings::validate_now::run_now(&app.wizard_state.step1);
         }
 
-        app.install_screen_state
-            .gallery
-            .load_cached_feed_and_arm_fetch();
-
         app
     }
 
@@ -1561,7 +1557,6 @@ impl OrchestratorApp {
         let config_root = dir.join(format!("{stem}_config"));
         crate::platform_defaults::set_config_dir_override(Some(config_root.clone()));
         app.isolated_test_config_root = Some(config_root);
-        app.install_screen_state.gallery.reset_feed_to_snapshot();
         app
     }
 

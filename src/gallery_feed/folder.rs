@@ -9,11 +9,10 @@ use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::app::modlist_biolist;
-use crate::app::modlist_share::{base64_standard_encode, preview_modlist_share_code};
+use crate::app::modlist_share::preview_modlist_share_code;
 use crate::gallery_feed::index::{
-    IndexEntry, IndexFile, MAX_CODE_BYTES, MAX_COVER_BYTES, MAX_COVER_WIDTH, MIN_COVER_WIDTH,
-    cover_matches_aspect, game_from_index_label, index_label_for_game, is_valid_id,
-    text_field_errors,
+    IndexEntry, IndexFile, MAX_CODE_BYTES, game_from_index_label, index_label_for_game,
+    is_valid_id, text_field_errors, validate_cover_bytes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,29 +106,13 @@ fn compare_biolist(disk_bytes: &[u8], code: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_cover(cover_path: &Path) -> Result<Option<Vec<u8>>, String> {
+fn validate_cover(cover_path: &Path) -> Result<bool, String> {
     if !cover_path.is_file() {
-        return Ok(None);
+        return Ok(false);
     }
     let bytes = std::fs::read(cover_path).map_err(|err| err.to_string())?;
-    if bytes.len() > MAX_COVER_BYTES {
-        return Err("cover.png is over 150 KB".to_string());
-    }
-    let decoded = image::load_from_memory(&bytes)
-        .map_err(|err| format!("cover.png is not a decodable PNG: {err}"))?;
-    let width = decoded.width();
-    let height = decoded.height();
-    if !(MIN_COVER_WIDTH..=MAX_COVER_WIDTH).contains(&width) {
-        return Err(format!(
-            "cover.png width {width} is outside {MIN_COVER_WIDTH}..={MAX_COVER_WIDTH}"
-        ));
-    }
-    if !cover_matches_aspect(width, height) {
-        return Err(format!(
-            "cover.png is {width}x{height}, which is not within 2% of the 460:215 aspect"
-        ));
-    }
-    Ok(Some(bytes))
+    validate_cover_bytes(&bytes)?;
+    Ok(true)
 }
 
 fn validate_meta_fields(id: &str, meta: &EntryMeta, seen_ids: &mut HashSet<String>) -> Vec<String> {
@@ -190,10 +173,10 @@ fn build_entry_for_folder(
         }
     };
 
-    let mut cover_png_base64 = None;
+    let mut cover = None;
     match validate_cover(&folder_path.join("cover.png")) {
-        Ok(Some(bytes)) => cover_png_base64 = Some(base64_standard_encode(&bytes)),
-        Ok(None) => {}
+        Ok(true) => cover = Some(format!("{id}/cover.png")),
+        Ok(false) => {}
         Err(err) => errors.push(format!("{id}: {err}")),
     }
 
@@ -236,8 +219,8 @@ fn build_entry_for_folder(
         featured: meta.featured,
         version: meta.version.clone(),
         requirements: meta.requirements.clone(),
-        code,
-        cover_png_base64,
+        biolist: format!("{id}/modlist.biolist"),
+        cover,
     })
 }
 
@@ -566,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn a_good_cover_is_embedded_as_base64() {
+    fn a_good_cover_is_referenced_by_path() {
         let root = TempRoot::new();
         write_valid_entry(&root, "good-cover");
         let dir = root.0.join("good-cover");
@@ -574,7 +557,7 @@ mod tests {
         let report = build_index(&root.0);
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         let index_text = report.index_text.expect("index text present");
-        assert!(index_text.contains("cover_png_base64"));
+        assert!(index_text.contains("\"cover\": \"good-cover/cover.png\""));
     }
 
     #[test]
@@ -629,8 +612,8 @@ mod tests {
                     featured: true,
                     version: "1.0.0".to_string(),
                     requirements: None,
-                    code: "code".to_string(),
-                    cover_png_base64: None,
+                    biolist: "zulu/modlist.biolist".to_string(),
+                    cover: None,
                 },
                 IndexEntry {
                     id: "alpha".to_string(),
@@ -642,8 +625,8 @@ mod tests {
                     featured: true,
                     version: "1.0.0".to_string(),
                     requirements: None,
-                    code: "code".to_string(),
-                    cover_png_base64: None,
+                    biolist: "alpha/modlist.biolist".to_string(),
+                    cover: None,
                 },
             ],
         };

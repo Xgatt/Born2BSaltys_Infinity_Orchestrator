@@ -14,7 +14,7 @@ gallery/
     cover.png             optional card art
 ```
 
-BIO reads only `index.json`. Nothing else in this folder is read by the app.
+`index.json` is a lean manifest: per entry, the metadata plus the relative paths of its `modlist.biolist` and, when present, its `cover.png`. The BIO build embeds this whole folder into the exe, so a change here ships with the next release.
 
 ## `entry.json` fields
 

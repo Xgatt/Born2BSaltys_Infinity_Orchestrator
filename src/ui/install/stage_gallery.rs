@@ -6,6 +6,7 @@ use eframe::egui;
 use crate::gallery_feed::index::FeedEntry;
 use crate::registry::model::Game;
 use crate::ui::install::gallery::card_art;
+use crate::ui::install::gallery::catalog;
 use crate::ui::install::gallery::filter::{CARD_GAP_PX, GalleryFilter, column_count};
 use crate::ui::install::state_install::InstallScreenState;
 use crate::ui::orchestrator::widgets::{
@@ -65,9 +66,7 @@ pub fn render(
     filter_row(ui, palette, &mut state.gallery.filter);
     ui.add_space(12.0);
 
-    let visible: Vec<&FeedEntry> = state
-        .gallery
-        .entries
+    let visible: Vec<&FeedEntry> = catalog::entries()
         .iter()
         .filter(|entry| state.gallery.filter.matches(entry))
         .collect();
