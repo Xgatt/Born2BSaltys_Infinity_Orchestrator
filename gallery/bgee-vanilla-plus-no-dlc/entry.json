@@ -1,9 +1,9 @@
 {
   "id": "bgee-vanilla-plus-no-dlc",
   "name": "BGEE Vanilla+ (no DLC)",
-  "author": "Community Collection",
-  "description": "Baldur's Gate as it shipped, minus the rough edges, for a game without the Siege of Dragonspear archive: the community fixpack only.",
-  "tags": ["Vanilla+", "Fixes only"],
+  "author": "BIO Team",
+  "description": "Baldur's Gate as it shipped, minus the rough edges: the community fixpack, EEex, a cleaner UI, the graphical overhaul, Icewind Dale's spells and a light pass of quality-of-life tweaks that never reshape the campaign.",
+  "tags": ["Vanilla+", "Quality of life"],
   "game": "BGEE",
   "featured": false,
   "version": "1.0.0"

@@ -308,12 +308,29 @@ mod tests {
         );
         assert_pins(
             &overrides_text_for("bgee-vanilla-plus"),
-            &subset(&["DlcMerger", "eefixpack", "cdtweaks"]),
+            &subset(&[
+                "DlcMerger",
+                "eefixpack",
+                "cdtweaks",
+                "HiddenGameplayOptions",
+                "LeUI",
+                "remastered_spell_icons",
+                "eeex",
+                "bubb_spell_menu_extended",
+            ]),
             "bgee-vanilla-plus",
         );
         assert_pins(
             &overrides_text_for("bgee-vanilla-plus-no-dlc"),
-            &subset(&["eefixpack"]),
+            &subset(&[
+                "eefixpack",
+                "cdtweaks",
+                "HiddenGameplayOptions",
+                "LeUI",
+                "remastered_spell_icons",
+                "eeex",
+                "bubb_spell_menu_extended",
+            ]),
             "bgee-vanilla-plus-no-dlc",
         );
         assert_pins(
@@ -417,23 +434,57 @@ mod tests {
 
         let vanilla_entry = by_id("bgee-vanilla-plus");
         let vanilla_preview = preview_modlist_share_code(&vanilla_entry.code).expect("parse");
-        assert_eq!(vanilla_preview.bgee_entries, 4);
+        assert_eq!(vanilla_preview.bgee_entries, 66);
 
         let vanilla_lines = log_lines(&vanilla_preview.bgee_log_text);
         assert!(vanilla_lines[0].contains("DLCMERGER.TP2~ #0 #1"));
         assert!(vanilla_lines[1].contains("SETUP-EEFIXPACK.TP2~ #0 #0"));
         assert!(vanilla_lines[2].contains("SETUP-EEFIXPACK.TP2~ #0 #2"));
-        assert!(vanilla_lines[3].contains("SETUP-CDTWEAKS.TP2~ #0 #2010"));
+        assert!(vanilla_lines[3].contains("EEEX.TP2~ #0 #0"));
+        assert!(!vanilla_preview.bgee_log_text.contains("EET\\EET.TP2"));
+        assert!(!vanilla_preview.bgee_log_text.contains("EET_TWEAKS.TP2"));
+        assert!(
+            !vanilla_preview
+                .bgee_log_text
+                .contains("HQ_SOUNDCLIPS_BG2EE.TP2")
+        );
+        assert!(
+            !vanilla_preview
+                .bgee_log_text
+                .contains("SETUP-CDTWEAKS.TP2~ #0 #4031")
+        );
+        assert!(
+            !vanilla_preview
+                .bgee_log_text
+                .contains("SETUP-CDTWEAKS.TP2~ #0 #4041")
+        );
+        assert!(
+            !vanilla_preview
+                .bgee_log_text
+                .contains("SETUP-CDTWEAKS.TP2~ #0 #4061")
+        );
+        assert!(
+            !vanilla_preview
+                .bgee_log_text
+                .contains("SETUP-CDTWEAKS.TP2~ #0 #4071")
+        );
 
         let no_dlc_entry = by_id("bgee-vanilla-plus-no-dlc");
         let no_dlc_preview = preview_modlist_share_code(&no_dlc_entry.code).expect("parse");
-        assert_eq!(no_dlc_preview.bgee_entries, 2);
+        assert_eq!(no_dlc_preview.bgee_entries, 65);
 
         let no_dlc_lines = log_lines(&no_dlc_preview.bgee_log_text);
         assert!(no_dlc_lines[0].contains("SETUP-EEFIXPACK.TP2~ #0 #0"));
         assert!(no_dlc_lines[1].contains("SETUP-EEFIXPACK.TP2~ #0 #2"));
         assert!(!no_dlc_preview.bgee_log_text.contains("DLCMERGER.TP2"));
-        assert!(!no_dlc_preview.bgee_log_text.contains("CDTWEAKS"));
+        assert_eq!(
+            no_dlc_lines,
+            vanilla_lines
+                .iter()
+                .filter(|line| !line.contains("DLCMERGER.TP2"))
+                .copied()
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -523,21 +574,23 @@ mod tests {
 
         let vanilla_entry = by_id("bgee-vanilla-plus");
         let vanilla_preview = preview_modlist_share_code(&vanilla_entry.code).expect("parse");
+        let vanilla_lines = parsed_lines(&vanilla_preview.bgee_log_text);
         assert_versioned(
-            &parsed_lines(&vanilla_preview.bgee_log_text),
+            &vanilla_lines[..4],
             &[
                 "Merge DLC into game -> Siege of Dragonspear",
                 "Core Fixes",
                 "Game Text Update",
-                "Increase Ammo Stacking",
+                "Quick Menu Core",
             ],
         );
 
         let no_dlc_entry = by_id("bgee-vanilla-plus-no-dlc");
         let no_dlc_preview = preview_modlist_share_code(&no_dlc_entry.code).expect("parse");
+        let no_dlc_lines = parsed_lines(&no_dlc_preview.bgee_log_text);
         assert_versioned(
-            &parsed_lines(&no_dlc_preview.bgee_log_text),
-            &["Core Fixes", "Game Text Update"],
+            &no_dlc_lines[..3],
+            &["Core Fixes", "Game Text Update", "Quick Menu Core"],
         );
 
         let iwdee_entry = by_id("iwdee-essentials");
@@ -593,5 +646,62 @@ mod tests {
         assert_eq!(version_of("EET"), "v14.0");
         assert_eq!(version_of("CDTweaks"), "v18");
         assert_eq!(version_of("LeUI"), "4.9.1");
+    }
+
+    const BG2EE_FOLDERS_NOT_CARRIED_OVER: [&str; 5] = [
+        "EET",
+        "EET_Tweaks",
+        "EET_end",
+        "HQ_SoundClips_BG2EE",
+        "EEFixPack",
+    ];
+    const DROPPED_CDTWEAKS_COMPONENTS: [&str; 4] = ["4031", "4041", "4061", "4071"];
+
+    fn should_drop_bg2ee_line(line: &str) -> bool {
+        let component = Component::parse_weidu_line(line).expect("payload line parses");
+        BG2EE_FOLDERS_NOT_CARRIED_OVER
+            .iter()
+            .any(|folder| folder.eq_ignore_ascii_case(&component.name))
+            || (component.name.eq_ignore_ascii_case("CDTweaks")
+                && DROPPED_CDTWEAKS_COMPONENTS.contains(&component.component.as_str()))
+    }
+
+    fn derive_with_dlc_bgee_log(
+        eet_essentials_preview: &crate::app::modlist_share::ModlistSharePreview,
+    ) -> String {
+        let header = [
+            "// Log of Currently Installed WeiDU Mods",
+            "// The top of the file is the 'oldest' mod",
+            "// ~TP2_File~ #language_number #component_number // [Subcomponent Name -> ] Component Name [ : Version]",
+        ];
+        let mut out: Vec<&str> = header.to_vec();
+        out.extend(log_lines(&eet_essentials_preview.bgee_log_text));
+        out.extend(
+            log_lines(&eet_essentials_preview.bg2ee_log_text)
+                .into_iter()
+                .filter(|line| !should_drop_bg2ee_line(line)),
+        );
+        out.join("\n")
+    }
+
+    #[test]
+    fn bgee_vanilla_plus_is_eet_essentials_minus_the_eet_only_pieces() {
+        let eet_essentials_entry = by_id("eet-essentials");
+        let eet_essentials_preview =
+            preview_modlist_share_code(&eet_essentials_entry.code).expect("parse");
+        let expected_with_dlc = derive_with_dlc_bgee_log(&eet_essentials_preview);
+
+        let vanilla_entry = by_id("bgee-vanilla-plus");
+        let vanilla_preview = preview_modlist_share_code(&vanilla_entry.code).expect("parse");
+        assert_eq!(vanilla_preview.bgee_log_text, expected_with_dlc);
+
+        let expected_no_dlc = expected_with_dlc
+            .lines()
+            .filter(|line| !line.contains("DLCMERGER.TP2"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let no_dlc_entry = by_id("bgee-vanilla-plus-no-dlc");
+        let no_dlc_preview = preview_modlist_share_code(&no_dlc_entry.code).expect("parse");
+        assert_eq!(no_dlc_preview.bgee_log_text, expected_no_dlc);
     }
 }
