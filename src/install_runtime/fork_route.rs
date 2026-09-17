@@ -13,6 +13,10 @@ pub(crate) fn extract_complete_route_to_workspace(orchestrator: &mut Orchestrato
         .notification_manager
         .success(format!("Imported \"{name}\" \u{2014} ready to edit"));
 
+    route_to_workspace(orchestrator, id);
+}
+
+pub(crate) fn route_to_workspace(orchestrator: &mut OrchestratorApp, id: String) {
     orchestrator.reset_install_screen_to_gallery();
     orchestrator.create_screen_state.modlist_name.clear();
     orchestrator.create_screen_state.destination.clear();

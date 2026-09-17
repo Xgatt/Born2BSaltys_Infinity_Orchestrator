@@ -6,7 +6,10 @@ use std::collections::HashSet;
 use std::sync::mpsc::Receiver;
 
 use crate::app::mod_downloads::{self, ModDownloadSource, ModDownloadsLoad};
-use crate::app::state::{Step2Selection, WizardState, update_selection_signature};
+use crate::app::state::{
+    ManualDownloadReason, ManualDownloadRequest, Step2Selection, WizardState,
+    push_manual_download_request, update_selection_signature,
+};
 
 pub(crate) fn preview_update_selected(
     state: &mut WizardState,
@@ -23,6 +26,7 @@ pub(crate) fn preview_update_selected(
     let FullUpdatePreviewCollection {
         mut known,
         mut manual,
+        mut manual_requests,
         mut unknown,
         locked,
         mut update_requests,
@@ -31,6 +35,7 @@ pub(crate) fn preview_update_selected(
     let mut pending_preview = PendingLogUpdatePreview {
         known: &mut known,
         manual: &mut manual,
+        manual_requests: &mut manual_requests,
         unknown: &mut unknown,
         update_requests: &mut update_requests,
     };
@@ -45,6 +50,7 @@ pub(crate) fn preview_update_selected(
     let preview = FullUpdatePreviewResult {
         known,
         manual,
+        manual_requests,
         unknown,
         locked,
         update_requests,
@@ -88,6 +94,7 @@ pub(crate) fn preview_update_selected_mod(
 struct FullUpdatePreviewCollection {
     known: Vec<String>,
     manual: Vec<String>,
+    manual_requests: Vec<ManualDownloadRequest>,
     unknown: Vec<String>,
     locked: Vec<String>,
     update_requests: Vec<super::app_step2_update_check::Step2UpdateCheckRequest>,
@@ -97,6 +104,7 @@ struct FullUpdatePreviewCollection {
 struct FullUpdatePreviewResult {
     known: Vec<String>,
     manual: Vec<String>,
+    manual_requests: Vec<ManualDownloadRequest>,
     unknown: Vec<String>,
     locked: Vec<String>,
     update_requests: Vec<super::app_step2_update_check::Step2UpdateCheckRequest>,
@@ -106,6 +114,7 @@ struct TargetUpdatePreview {
     target_label: Option<String>,
     known: Vec<String>,
     manual: Vec<String>,
+    manual_requests: Vec<ManualDownloadRequest>,
     unknown: Vec<String>,
     update_requests: Vec<super::app_step2_update_check::Step2UpdateCheckRequest>,
 }
@@ -119,6 +128,7 @@ fn collect_full_update_preview(
     let mut preview = FullUpdatePreviewCollection {
         known: Vec::new(),
         manual: Vec::new(),
+        manual_requests: Vec::new(),
         unknown: Vec::new(),
         locked: Vec::new(),
         update_requests: Vec::new(),
@@ -220,10 +230,34 @@ fn queue_mod_update_preview(
         } else {
             mod_state.package_marker = Some('!');
             preview.manual.push(label.to_string());
+            push_manual_download_request(
+                &mut preview.manual_requests,
+                ManualDownloadRequest {
+                    game_tab: game_tab.to_string(),
+                    tp_file: mod_state.tp_file.clone(),
+                    label: label.to_string(),
+                    source_id: source.source_id.clone(),
+                    page_url: source.url.clone(),
+                    reason: ManualDownloadReason::NotAutoResolvable,
+                    aliases: source.aliases.clone(),
+                },
+            );
         }
     } else {
         mod_state.package_marker = Some('!');
         preview.unknown.push(label.to_string());
+        push_manual_download_request(
+            &mut preview.manual_requests,
+            ManualDownloadRequest {
+                game_tab: game_tab.to_string(),
+                tp_file: mod_state.tp_file.clone(),
+                label: label.to_string(),
+                source_id: String::new(),
+                page_url: String::new(),
+                reason: ManualDownloadReason::NoSourceEntry,
+                aliases: Vec::new(),
+            },
+        );
     }
 }
 
@@ -239,6 +273,7 @@ fn apply_full_update_preview_state(
     let request_count = preview.update_requests.len();
     state.step2.update_selected_known_sources = preview.known;
     state.step2.update_selected_manual_sources = preview.manual;
+    state.step2.update_selected_manual_downloads = preview.manual_requests;
     state.step2.update_selected_unknown_sources = preview.unknown;
     clear_full_update_preview_results(state);
     state.step2.update_selected_check_total_count = request_count;
@@ -357,6 +392,7 @@ fn collect_target_update_preview(
         target_label: None,
         known: Vec::new(),
         manual: Vec::new(),
+        manual_requests: Vec::new(),
         unknown: Vec::new(),
         update_requests: Vec::new(),
     };
@@ -409,10 +445,34 @@ fn queue_target_mod_update_preview(
         } else {
             mod_state.package_marker = Some('!');
             preview.manual.push(label.to_string());
+            push_manual_download_request(
+                &mut preview.manual_requests,
+                ManualDownloadRequest {
+                    game_tab: game_tab.to_string(),
+                    tp_file: mod_state.tp_file.clone(),
+                    label: label.to_string(),
+                    source_id: source.source_id.clone(),
+                    page_url: source.url.clone(),
+                    reason: ManualDownloadReason::NotAutoResolvable,
+                    aliases: source.aliases.clone(),
+                },
+            );
         }
     } else {
         mod_state.package_marker = Some('!');
         preview.unknown.push(label.to_string());
+        push_manual_download_request(
+            &mut preview.manual_requests,
+            ManualDownloadRequest {
+                game_tab: game_tab.to_string(),
+                tp_file: mod_state.tp_file.clone(),
+                label: label.to_string(),
+                source_id: String::new(),
+                page_url: String::new(),
+                reason: ManualDownloadReason::NoSourceEntry,
+                aliases: Vec::new(),
+            },
+        );
     }
 }
 
@@ -461,9 +521,33 @@ fn queue_pending_target_update_preview(
             preview.known.push(pending.label.clone());
         } else {
             preview.manual.push(pending.label.clone());
+            push_manual_download_request(
+                &mut preview.manual_requests,
+                ManualDownloadRequest {
+                    game_tab: pending.game_tab.clone(),
+                    tp_file: pending.tp_file.clone(),
+                    label: pending.label.clone(),
+                    source_id: source.source_id.clone(),
+                    page_url: source.url.clone(),
+                    reason: ManualDownloadReason::NotAutoResolvable,
+                    aliases: source.aliases.clone(),
+                },
+            );
         }
     } else {
         preview.unknown.push(pending.label.clone());
+        push_manual_download_request(
+            &mut preview.manual_requests,
+            ManualDownloadRequest {
+                game_tab: pending.game_tab.clone(),
+                tp_file: pending.tp_file.clone(),
+                label: pending.label.clone(),
+                source_id: String::new(),
+                page_url: String::new(),
+                reason: ManualDownloadReason::NoSourceEntry,
+                aliases: Vec::new(),
+            },
+        );
     }
     preview.target_label = Some(pending.label.clone());
 }
@@ -494,6 +578,16 @@ fn apply_target_update_preview(
             label,
             preview.unknown,
         );
+        state
+            .step2
+            .update_selected_manual_downloads
+            .retain(|request| request.game_tab != game_tab || request.tp_file != tp_file);
+        for request in preview.manual_requests {
+            push_manual_download_request(
+                &mut state.step2.update_selected_manual_downloads,
+                request,
+            );
+        }
         super::app_step2_update_check::clear_update_check_result_for_mod(
             state, game_tab, tp_file, label,
         );
@@ -636,6 +730,7 @@ fn queue_source_request(
 struct PendingLogUpdatePreview<'a> {
     known: &'a mut Vec<String>,
     manual: &'a mut Vec<String>,
+    manual_requests: &'a mut Vec<ManualDownloadRequest>,
     unknown: &'a mut Vec<String>,
     update_requests: &'a mut Vec<super::app_step2_update_check::Step2UpdateCheckRequest>,
 }
@@ -671,9 +766,33 @@ fn extend_log_pending_update_requests(
                 pending_preview.known.push(pending.label.clone());
             } else {
                 pending_preview.manual.push(pending.label.clone());
+                push_manual_download_request(
+                    pending_preview.manual_requests,
+                    ManualDownloadRequest {
+                        game_tab: pending.game_tab.clone(),
+                        tp_file: pending.tp_file.clone(),
+                        label: pending.label.clone(),
+                        source_id: source.source_id.clone(),
+                        page_url: source.url.clone(),
+                        reason: ManualDownloadReason::NotAutoResolvable,
+                        aliases: source.aliases.clone(),
+                    },
+                );
             }
         } else {
             pending_preview.unknown.push(pending.label.clone());
+            push_manual_download_request(
+                pending_preview.manual_requests,
+                ManualDownloadRequest {
+                    game_tab: pending.game_tab.clone(),
+                    tp_file: pending.tp_file.clone(),
+                    label: pending.label.clone(),
+                    source_id: String::new(),
+                    page_url: String::new(),
+                    reason: ManualDownloadReason::NoSourceEntry,
+                    aliases: Vec::new(),
+                },
+            );
         }
     }
 }
@@ -858,5 +977,97 @@ mod tests {
             Some("modA/modA.tp2".to_string())
         );
         assert!(rx.is_none());
+    }
+
+    #[test]
+    fn requests_collected_for_manual_source_with_url() {
+        use crate::app::mod_downloads::ModDownloadSource;
+        use crate::app::state::Step2ModState;
+
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![Step2ModState {
+            name: "Ascension".to_string(),
+            tp_file: "ascension/setup-ascension.tp2".to_string(),
+            tp2_path: String::new(),
+            readme_path: None,
+            ini_path: None,
+            web_url: None,
+            package_marker: None,
+            latest_checked_version: None,
+            update_locked: false,
+            mod_prompt_summary: None,
+            mod_prompt_events: Vec::new(),
+            checked: true,
+            hidden_components: Vec::new(),
+            components: Vec::new(),
+        }];
+        let sources = ModDownloadsLoad {
+            sources: vec![ModDownloadSource {
+                tp2: "ascension/setup-ascension.tp2".to_string(),
+                url: "https://www.nexusmods.com/baldursgateenhancededition/mods/1".to_string(),
+                ..ModDownloadSource::default()
+            }],
+            error: None,
+        };
+        let mut rx = None;
+        preview_update_selected(&mut state, &mut rx, &sources);
+
+        assert_eq!(state.step2.update_selected_manual_downloads.len(), 1);
+        let request = &state.step2.update_selected_manual_downloads[0];
+        assert_eq!(request.reason, ManualDownloadReason::NotAutoResolvable);
+        assert_eq!(
+            request.page_url,
+            "https://www.nexusmods.com/baldursgateenhancededition/mods/1"
+        );
+    }
+
+    #[test]
+    fn requests_collected_for_manual_source_via_target_preview() {
+        use crate::app::mod_downloads::ModDownloadSource;
+        use crate::app::state::Step2ModState;
+
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![Step2ModState {
+            name: "Ascension".to_string(),
+            tp_file: "ascension/setup-ascension.tp2".to_string(),
+            tp2_path: String::new(),
+            readme_path: None,
+            ini_path: None,
+            web_url: None,
+            package_marker: None,
+            latest_checked_version: None,
+            update_locked: false,
+            mod_prompt_summary: None,
+            mod_prompt_events: Vec::new(),
+            checked: true,
+            hidden_components: Vec::new(),
+            components: Vec::new(),
+        }];
+        let sources = ModDownloadsLoad {
+            sources: vec![ModDownloadSource {
+                tp2: "ascension/setup-ascension.tp2".to_string(),
+                url: "https://www.nexusmods.com/baldursgateenhancededition/mods/1".to_string(),
+                ..ModDownloadSource::default()
+            }],
+            error: None,
+        };
+        let mut rx = None;
+        preview_update_selected_mod(
+            &mut state,
+            &mut rx,
+            &sources,
+            (
+                "BGEE".to_string(),
+                "ascension/setup-ascension.tp2".to_string(),
+            ),
+        );
+
+        assert_eq!(state.step2.update_selected_manual_downloads.len(), 1);
+        let request = &state.step2.update_selected_manual_downloads[0];
+        assert_eq!(request.reason, ManualDownloadReason::NotAutoResolvable);
+        assert_eq!(
+            request.page_url,
+            "https://www.nexusmods.com/baldursgateenhancededition/mods/1"
+        );
     }
 }

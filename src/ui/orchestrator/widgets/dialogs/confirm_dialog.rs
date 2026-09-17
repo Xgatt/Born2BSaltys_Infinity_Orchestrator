@@ -22,6 +22,7 @@ pub struct ConfirmDialog<'a> {
     pub title: &'a str,
     pub body: &'a str,
     pub confirm_label: &'a str,
+    pub cancel_label: &'a str,
     pub danger: bool,
 }
 
@@ -101,7 +102,7 @@ pub fn render(
                     if redesign_btn(
                         ui,
                         palette,
-                        "Cancel",
+                        dialog.cancel_label,
                         BtnOpts {
                             small: true,
                             ..Default::default()

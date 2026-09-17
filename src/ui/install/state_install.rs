@@ -271,6 +271,71 @@ impl InstallPipelineFlags {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ManualRowStatus {
+    Waiting,
+    Found,
+    Refused(String),
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManualDownloadRow {
+    pub(crate) label: String,
+    pub(crate) from: String,
+    pub(crate) page_url: String,
+    pub(crate) status: ManualRowStatus,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ManualDownloadsState {
+    pub(crate) rows: Vec<ManualDownloadRow>,
+    pub(crate) watched_folder: String,
+    pub(crate) unmatched: Vec<String>,
+    pub(crate) handled: Vec<std::path::PathBuf>,
+    pub(crate) baseline: Vec<(std::path::PathBuf, u64, std::time::SystemTime)>,
+    pub(crate) continue_without: bool,
+    pub(crate) confirm_open: bool,
+    pub(crate) last_refusal: Option<String>,
+}
+
+impl ManualDownloadsState {
+    #[must_use]
+    pub(crate) fn manual_hold_active(&self) -> bool {
+        !self.rows.is_empty()
+            && self.rows.iter().any(|row| {
+                matches!(
+                    row.status,
+                    ManualRowStatus::Waiting | ManualRowStatus::Refused(_)
+                )
+            })
+            && !self.continue_without
+    }
+
+    #[must_use]
+    pub(crate) fn pending_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| {
+                !matches!(
+                    row.status,
+                    ManualRowStatus::Found | ManualRowStatus::Skipped
+                )
+            })
+            .count()
+    }
+
+    #[must_use]
+    pub(crate) fn continue_label(&self) -> String {
+        let n = self.pending_count();
+        if n == 1 {
+            "Continue without 1 mod".to_string()
+        } else {
+            format!("Continue without {n} mods")
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct InstallScreenState {
     pub(crate) source_compat_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
@@ -300,6 +365,7 @@ pub struct InstallScreenState {
     pub expected_archive_sizes: std::collections::BTreeMap<usize, u64>,
     pub skip_indices: std::collections::HashSet<usize>,
     pub hashed_indices: std::collections::HashSet<usize>,
+    pub(crate) manual_downloads: ManualDownloadsState,
 }
 
 impl InstallScreenState {
@@ -386,6 +452,90 @@ impl InstallScreenState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(status: ManualRowStatus) -> ManualDownloadRow {
+        ManualDownloadRow {
+            label: "Ascension".to_string(),
+            from: "nexusmods.com".to_string(),
+            page_url: "https://www.nexusmods.com/baldursgate2ee/mods/12".to_string(),
+            status,
+        }
+    }
+
+    #[test]
+    fn hold_active_only_with_pending_rows() {
+        assert!(!ManualDownloadsState::default().manual_hold_active());
+
+        let waiting = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Waiting)],
+            ..Default::default()
+        };
+        assert!(waiting.manual_hold_active());
+
+        let all_found = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Found), row(ManualRowStatus::Found)],
+            ..Default::default()
+        };
+        assert!(!all_found.manual_hold_active());
+
+        let waiting_but_continuing = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Waiting)],
+            continue_without: true,
+            ..Default::default()
+        };
+        assert!(!waiting_but_continuing.manual_hold_active());
+
+        let refused = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Refused("bad archive".to_string()))],
+            ..Default::default()
+        };
+        assert!(refused.manual_hold_active());
+    }
+
+    #[test]
+    fn continue_label_singular_plural() {
+        let one = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Waiting)],
+            ..Default::default()
+        };
+        assert_eq!(one.continue_label(), "Continue without 1 mod");
+
+        let three = ManualDownloadsState {
+            rows: vec![
+                row(ManualRowStatus::Waiting),
+                row(ManualRowStatus::Waiting),
+                row(ManualRowStatus::Refused("x".to_string())),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(three.continue_label(), "Continue without 3 mods");
+    }
+
+    #[test]
+    fn pending_count_ignores_found_and_skipped() {
+        let state = ManualDownloadsState {
+            rows: vec![
+                row(ManualRowStatus::Waiting),
+                row(ManualRowStatus::Found),
+                row(ManualRowStatus::Skipped),
+                row(ManualRowStatus::Refused("x".to_string())),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(state.pending_count(), 2);
+    }
+
+    #[test]
+    fn install_screen_state_carries_manual_downloads_field() {
+        let st = InstallScreenState {
+            manual_downloads: ManualDownloadsState {
+                rows: vec![row(ManualRowStatus::Waiting)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(st.manual_downloads.rows.len(), 1);
+    }
 
     #[test]
     fn clear_maps_to_prepare_on_backup_off_no_skip() {

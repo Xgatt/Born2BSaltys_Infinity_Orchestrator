@@ -9,6 +9,7 @@ pub mod fork_info_button;
 pub mod gallery;
 pub mod highlight;
 pub mod inside_model;
+pub mod manual_downloads_panel;
 pub mod page_install;
 pub mod preview_counts;
 pub mod stage_details;

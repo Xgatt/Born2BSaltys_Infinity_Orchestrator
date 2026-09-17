@@ -175,7 +175,7 @@ pub(crate) fn archive_file_name(asset: &Step2UpdateAsset) -> String {
     format!("{tp2}__{source}__{tag}{ext}")
 }
 
-fn tp2_archive_name(tp_file: &str) -> String {
+pub(crate) fn tp2_archive_name(tp_file: &str) -> String {
     let replaced = tp_file.replace('\\', "/");
     let file = replaced.rsplit('/').next().unwrap_or(&replaced).trim();
     let lower = file.to_ascii_lowercase();
@@ -183,7 +183,7 @@ fn tp2_archive_name(tp_file: &str) -> String {
     without_ext.to_string()
 }
 
-fn archive_extension(name: &str) -> String {
+pub(crate) fn archive_extension(name: &str) -> String {
     let lower = name.to_ascii_lowercase();
     for ext in [
         ".tar.gz", ".tar.bz2", ".tar.xz", ".zip", ".7z", ".rar", ".tgz", ".tbz2", ".txz",
@@ -195,7 +195,7 @@ fn archive_extension(name: &str) -> String {
     ".zip".to_string()
 }
 
-fn safe_archive_segment(value: &str) -> String {
+pub(crate) fn safe_archive_segment(value: &str) -> String {
     let sanitized = value
         .trim()
         .chars()

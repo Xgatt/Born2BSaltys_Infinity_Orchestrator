@@ -568,6 +568,8 @@ fn invalidate_update_selected_results(state: &mut WizardState) {
     state.step2.update_selected_extract_failed_sources.clear();
     state.step2.update_selected_known_sources.clear();
     state.step2.update_selected_manual_sources.clear();
+    state.step2.update_selected_manual_downloads.clear();
+    state.step2.skipped_manual_downloads.clear();
     state.step2.update_selected_unknown_sources.clear();
     state
         .step2

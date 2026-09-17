@@ -16,13 +16,13 @@ use super::plan::Step2UpdateExtractJob;
 use super::{Step2UpdateExtractEvent, Step2UpdateExtractResult};
 
 #[path = "app_step2_update_extract_archive/rar_extract.rs"]
-mod rar_extract;
+pub mod rar_extract;
 #[path = "app_step2_update_extract_archive/seven_zip_extract.rs"]
-mod seven_zip_extract;
+pub mod seven_zip_extract;
 #[path = "app_step2_update_extract_archive/tar_gz_extract.rs"]
-mod tar_gz_extract;
+pub mod tar_gz_extract;
 #[path = "app_step2_update_extract_archive/zip_extract.rs"]
-mod zip_extract;
+pub mod zip_extract;
 
 pub(super) fn extract_update_archives(
     jobs: &[Step2UpdateExtractJob],
@@ -233,7 +233,7 @@ fn tp2_parent_matches(path: &Path, accepted: &[String]) -> bool {
         })
 }
 
-fn accepted_tp2_names(tp_file: &str, aliases: &[String]) -> Vec<String> {
+pub(crate) fn accepted_tp2_names(tp_file: &str, aliases: &[String]) -> Vec<String> {
     let mut accepted = vec![mod_downloads::normalize_mod_download_tp2(tp_file)];
     for alias in aliases {
         let alias = mod_downloads::normalize_mod_download_tp2(alias);

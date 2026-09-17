@@ -14,6 +14,8 @@ pub mod fork_route;
 pub mod import_code_writer;
 pub mod install_concurrency;
 pub mod install_modlist_registration;
+pub mod manual_archive_probe;
+pub mod manual_download_watcher;
 pub mod per_install_dirs;
 pub mod rail_lock_reason;
 pub mod registry_transition;
