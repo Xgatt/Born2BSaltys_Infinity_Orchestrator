@@ -3,7 +3,6 @@
 
 use crate::app::controller::step3_sync::scrub_dev_settings;
 use crate::app::controller::util::current_exe_fingerprint;
-use crate::app::nexus_auth::NexusAccount;
 use crate::app::state::Step1State;
 use crate::settings::model::AppSettings;
 use crate::settings::redesign_fields::RedesignSettings;
@@ -16,7 +15,6 @@ pub(crate) struct AppBootstrap {
     pub(crate) step1: Step1State,
     pub(crate) general: RedesignSettings,
     pub(crate) github_auth_login: String,
-    pub(crate) nexus_account: Option<NexusAccount>,
 }
 
 pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
@@ -60,19 +58,11 @@ pub(crate) fn initialize(dev_mode: bool) -> AppBootstrap {
                 String::new()
             }
         };
-    let nexus_account = match crate::app::nexus_auth::load_nexus_account_from_stored_key() {
-        Ok(account) => account,
-        Err(err) => {
-            warn!(target = "orchestrator", "nexus auth restore failed: {err}");
-            None
-        }
-    };
     AppBootstrap {
         settings_store,
         exe_fingerprint,
         step1,
         general,
         github_auth_login,
-        nexus_account,
     }
 }

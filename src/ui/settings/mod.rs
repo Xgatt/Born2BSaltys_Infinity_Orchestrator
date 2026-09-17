@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
-pub mod nexus_connect_dialog;
-pub mod nexus_glue;
 pub mod oauth_glue;
 pub mod page_settings;
 pub mod state_settings;

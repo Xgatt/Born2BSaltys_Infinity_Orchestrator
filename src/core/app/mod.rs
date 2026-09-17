@@ -97,7 +97,6 @@ pub mod mod_update_locks;
 pub mod modlist_biolist;
 pub mod modlist_config_files;
 pub mod modlist_share;
-pub mod nexus_auth;
 #[path = "step2/update/platform_asset_target.rs"]
 pub mod platform_asset_target;
 pub mod prompt_eval_context;
