@@ -1564,6 +1564,8 @@ impl OrchestratorApp {
         if let Some(root) = self.isolated_test_config_root.take() {
             let _ = std::fs::remove_dir_all(&root);
             crate::platform_defaults::clear_config_dir_override_if(&root);
+            let _ = std::fs::remove_file(self.registry_store.path());
+            let _ = std::fs::remove_file(self.settings_store.path());
         }
     }
 }
