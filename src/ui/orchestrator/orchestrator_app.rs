@@ -48,7 +48,6 @@ use crate::ui::orchestrator::page_router;
 use crate::ui::orchestrator::stubs::home_stub::HomeStubState;
 use crate::ui::orchestrator::widgets::NotificationManager;
 use crate::ui::orchestrator::widgets::clipboard;
-use crate::ui::settings::nexus_glue;
 use crate::ui::settings::oauth_glue;
 use crate::ui::settings::state_settings::SettingsScreenState;
 use crate::ui::settings::validate_debounce;
@@ -254,8 +253,6 @@ pub struct OrchestratorApp {
     pub redesign_settings: RedesignSettings,
     pub settings_screen_state: SettingsScreenState,
     pub(crate) github_auth_rx: Option<Receiver<GitHubOAuthFlowResult>>,
-    pub nexus_account: Option<crate::app::nexus_auth::NexusAccount>,
-    pub(crate) nexus_auth_rx: Option<Receiver<crate::app::nexus_auth::NexusLoginResult>>,
     pub tool_version_cache: ToolVersionCache,
     pub accounts_stub_hint: Option<String>,
     pub bio_settings_last_saved: AppSettings,
@@ -411,8 +408,6 @@ impl OrchestratorApp {
             redesign_settings,
             settings_screen_state: SettingsScreenState::default(),
             github_auth_rx: None,
-            nexus_account: bootstrap.nexus_account,
-            nexus_auth_rx: None,
             tool_version_cache: ToolVersionCache::default(),
             accounts_stub_hint: None,
             bio_settings_last_saved: bio_settings_snapshot,
@@ -1426,7 +1421,6 @@ impl eframe::App for OrchestratorApp {
         }
 
         oauth_glue::poll_github_oauth_flow(self);
-        nexus_glue::poll_nexus_validation(self);
 
         self.poll_step2_channels();
         crate::ui::workspace::step2::step2_rescan_reconcile::reconcile_on_scan_complete(self);
@@ -1513,7 +1507,6 @@ impl eframe::App for OrchestratorApp {
         self.drive_notifications(ctx, palette, history_clicked);
 
         oauth_glue::render_github_popup_if_open(self, ctx);
-        nexus_glue::render_nexus_dialog_if_open(self, ctx);
 
         step5_requested_repaint |= self.start_step5_and_check_focus();
         schedule_repaint_if_needed(
@@ -1555,7 +1548,6 @@ impl OrchestratorApp {
             dir.join(format!("{stem}_settings.json")),
         );
         app.wizard_state.step1 = crate::app::state::Step1State::default();
-        app.nexus_account = None;
         app.path_validation = compute_path_validation_summary(&app.wizard_state);
         app.bio_settings_last_saved = AppSettings {
             exe_fingerprint: app.exe_fingerprint.clone(),
@@ -1572,8 +1564,6 @@ impl OrchestratorApp {
         if let Some(root) = self.isolated_test_config_root.take() {
             let _ = std::fs::remove_dir_all(&root);
             crate::platform_defaults::clear_config_dir_override_if(&root);
-            let _ = std::fs::remove_file(self.registry_store.path());
-            let _ = std::fs::remove_file(self.settings_store.path());
         }
     }
 }

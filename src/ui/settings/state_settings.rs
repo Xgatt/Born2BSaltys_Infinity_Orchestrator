@@ -91,15 +91,6 @@ pub struct ValidationReport {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct NexusConnectDialogState {
-    pub open: bool,
-    pub focus_pending: bool,
-    pub key_input: String,
-    pub status_text: String,
-    pub validating: bool,
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct SettingsScreenState {
     pub active_tab: SettingsTab,
     pub name_row_editing: bool,
@@ -108,5 +99,4 @@ pub struct SettingsScreenState {
     pub validate_now_in_flight: bool,
     pub path_edit_debounce: HashMap<&'static str, Instant>,
     pub path_validation_results: ValidationReport,
-    pub nexus_dialog: NexusConnectDialogState,
 }

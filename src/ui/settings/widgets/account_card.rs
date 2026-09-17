@@ -13,10 +13,7 @@ use crate::ui::shared::redesign_tokens::{
 
 #[derive(Debug, Clone, Copy)]
 pub enum CardState<'a> {
-    Connected {
-        user_label: &'a str,
-        badge: Option<&'a str>,
-    },
+    Connected { user_label: &'a str },
     NotConnected,
 }
 
@@ -72,7 +69,7 @@ pub fn render(ui: &mut egui::Ui, palette: ThemePalette, card: AccountCard<'_>) -
                     .color(redesign_text_primary(palette)),
             );
 
-            if let CardState::Connected { user_label, .. } = &state {
+            if let CardState::Connected { user_label } = &state {
                 ui.add_space(8.0);
                 let handle = user_label.trim_start_matches('@');
                 ui.label(
@@ -115,19 +112,6 @@ pub fn render(ui: &mut egui::Ui, palette: ThemePalette, card: AccountCard<'_>) -
                     CardState::NotConnected => ("not connected", redesign_pill_neutral(palette)),
                 };
                 draw_pill(ui, palette, pill_text, pill_fill);
-
-                if let CardState::Connected {
-                    badge: Some(badge), ..
-                } = &state
-                {
-                    ui.add_space(6.0);
-                    let fill = if *badge == "premium" {
-                        redesign_pill_info(palette)
-                    } else {
-                        redesign_pill_neutral(palette)
-                    };
-                    draw_pill(ui, palette, badge, fill);
-                }
             });
         });
     });
