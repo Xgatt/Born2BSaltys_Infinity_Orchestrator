@@ -7,7 +7,10 @@ use crate::app::app_step2_update_policy::{
     version_is_update,
 };
 use crate::app::mod_downloads;
-use crate::app::state::{Step2UpdateAsset, Step2UpdateRetryRequest, WizardState};
+use crate::app::state::{
+    ManualDownloadReason, ManualDownloadRequest, Step2UpdateAsset, Step2UpdateRetryRequest,
+    WizardState, push_manual_download_request,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Step2UpdateCheckRequest {
@@ -38,6 +41,7 @@ pub(crate) struct Step2UpdateCheckOutcome {
     pub(crate) tp_file: String,
     pub(crate) label: String,
     pub(crate) source_id: String,
+    pub(crate) source_url: String,
     pub(crate) tag: Option<String>,
     pub(crate) source_ref: Option<String>,
     pub(crate) asset_name: Option<String>,
@@ -215,11 +219,15 @@ fn apply_update_check_outcome(
         let error = outcome.error.as_deref().unwrap_or("no release found");
         push_update_check_failure(
             state,
-            &outcome.game_tab,
-            &outcome.tp_file,
-            &outcome.label,
+            FailedCheckContext {
+                game_tab: &outcome.game_tab,
+                tp_file: &outcome.tp_file,
+                label: &outcome.label,
+                source_url: &outcome.source_url,
+            },
             error,
             merge_latest_fallback,
+            sources,
         );
     }
 }
@@ -261,11 +269,15 @@ fn apply_successful_update_check_outcome(
     if uses_source_snapshot && let Some(err) = sources.error.as_ref() {
         push_update_check_failure(
             state,
-            &outcome.game_tab,
-            &outcome.tp_file,
-            &outcome.label,
+            FailedCheckContext {
+                game_tab: &outcome.game_tab,
+                tp_file: &outcome.tp_file,
+                label: &outcome.label,
+                source_url: &outcome.source_url,
+            },
             err,
             merge_latest_fallback,
+            sources,
         );
         return;
     }
@@ -386,6 +398,7 @@ pub(super) fn failed_outcome(
         tp_file: request.tp_file,
         label: request.label,
         source_id: request.source_id,
+        source_url: request.source_url,
         tag: None,
         source_ref: None,
         asset_name: None,
@@ -499,14 +512,27 @@ fn log_missing_downloads_enabled(state: &WizardState) -> bool {
             && !state.step2.log_pending_downloads.is_empty())
 }
 
+#[derive(Clone, Copy)]
+struct FailedCheckContext<'a> {
+    game_tab: &'a str,
+    tp_file: &'a str,
+    label: &'a str,
+    source_url: &'a str,
+}
+
 fn push_update_check_failure(
     state: &mut WizardState,
-    game_tab: &str,
-    tp_file: &str,
-    label: &str,
+    ctx: FailedCheckContext<'_>,
     error: &str,
     merge_latest_fallback: bool,
+    sources: &mod_downloads::ModDownloadsLoad,
 ) {
+    let FailedCheckContext {
+        game_tab,
+        tp_file,
+        label,
+        source_url,
+    } = ctx;
     let entry = format!("{label}: {error}");
     if error.starts_with("exact version not found:") {
         state
@@ -518,6 +544,30 @@ fn push_update_check_failure(
         }
     } else {
         state.step2.update_selected_failed_sources.push(entry);
+        let tp2_key = mod_downloads::normalize_mod_download_tp2(tp_file);
+        let aliases = sources
+            .resolve_source(
+                tp_file,
+                state
+                    .step2
+                    .selected_source_ids
+                    .get(&tp2_key)
+                    .map(String::as_str),
+            )
+            .map(|source| source.aliases)
+            .unwrap_or_default();
+        push_manual_download_request(
+            &mut state.step2.update_selected_manual_downloads,
+            ManualDownloadRequest {
+                game_tab: game_tab.to_string(),
+                tp_file: tp_file.to_string(),
+                label: label.to_string(),
+                source_id: String::new(),
+                page_url: source_url.to_string(),
+                reason: ManualDownloadReason::SourceCheckFailed(error.to_string()),
+                aliases,
+            },
+        );
     }
 }
 
@@ -635,6 +685,7 @@ mod tests {
             tp_file: "ISNF.tp2".to_string(),
             label: "ISNF".to_string(),
             source_id: "weaselmods".to_string(),
+            source_url: String::new(),
             tag: Some("6.5.6".to_string()),
             source_ref: None,
             asset_name: Some("isnf-6.5.6.zip".to_string()),
@@ -660,5 +711,28 @@ mod tests {
             vec!["ISNF (6.5.5 -> 6.5.6)"],
             "override warning must use compact format: label (pinned -> served)"
         );
+    }
+
+    #[test]
+    fn failed_check_outcome_carries_source_url() {
+        let request = Step2UpdateCheckRequest {
+            game_tab: "BGEE".to_string(),
+            tp_file: "ascension/setup-ascension.tp2".to_string(),
+            label: "Ascension".to_string(),
+            source_id: String::new(),
+            repo: String::new(),
+            exact_github: vec![],
+            source_url: "https://www.nexusmods.com/baldursgateenhancededition/mods/1".to_string(),
+            channel: None,
+            tag: None,
+            commit: None,
+            branch: None,
+            asset: None,
+            pkg: None,
+            requested_version: None,
+        };
+        let expected_source_url = request.source_url.clone();
+        let outcome = failed_outcome(request, "x");
+        assert_eq!(outcome.source_url, expected_source_url);
     }
 }

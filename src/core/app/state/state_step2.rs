@@ -11,6 +11,36 @@ pub enum PromptPopupMode {
     ToolbarIndex,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManualDownloadReason {
+    NotAutoResolvable,
+    NoSourceEntry,
+    SourceCheckFailed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManualDownloadRequest {
+    pub game_tab: String,
+    pub tp_file: String,
+    pub label: String,
+    pub source_id: String,
+    pub page_url: String,
+    pub reason: ManualDownloadReason,
+    pub aliases: Vec<String>,
+}
+
+pub fn push_manual_download_request(
+    list: &mut Vec<ManualDownloadRequest>,
+    request: ManualDownloadRequest,
+) {
+    if list.iter().any(|existing| {
+        existing.game_tab == request.game_tab && existing.tp_file == request.tp_file
+    }) {
+        return;
+    }
+    list.push(request);
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Step2State<Flag = bool> {
     pub search_query: String,
@@ -90,6 +120,8 @@ pub struct Step2State<Flag = bool> {
     pub review_edit_bg2ee_log_applied: Flag,
     pub left_pane_ratio: f32,
     pub last_scan_report: Option<Step2ScanReport>,
+    pub update_selected_manual_downloads: Vec<ManualDownloadRequest>,
+    pub skipped_manual_downloads: Vec<String>,
 }
 
 impl Default for Step2State {
@@ -172,6 +204,8 @@ impl Default for Step2State {
             review_edit_bg2ee_log_applied: false,
             left_pane_ratio: 0.74,
             last_scan_report: None,
+            update_selected_manual_downloads: Vec::new(),
+            skipped_manual_downloads: Vec::new(),
         }
     }
 }

@@ -301,6 +301,8 @@ pub struct OrchestratorApp {
 
     pub(crate) archive_skip_rx:
         Option<Receiver<crate::install_runtime::archive_skip_async::ArchiveSkipEvent>>,
+    pub(crate) manual_download_rx:
+        Option<Receiver<crate::install_runtime::manual_download_watcher::WatchEvent>>,
     pub(crate) create_destination_prep_rx: Option<PendingCreateStart>,
     pub(crate) install_destination_prep_rx: Option<PendingInstallDestinationPrep>,
     pub(crate) workspace_destination_prep_rx: Option<PendingWorkspaceDestinationPrep>,
@@ -439,6 +441,7 @@ impl OrchestratorApp {
             extract_progress: Arc::new(std::sync::Mutex::new(None)),
             extract_parallel_rx: None,
             archive_skip_rx: None,
+            manual_download_rx: None,
             create_destination_prep_rx: None,
             install_destination_prep_rx: None,
             workspace_destination_prep_rx: None,
@@ -537,6 +540,7 @@ impl OrchestratorApp {
             stream_download_rx: &mut self.stream_download_rx,
             archive_skip_rx: &mut self.archive_skip_rx,
             extract_parallel_rx: &mut self.extract_parallel_rx,
+            manual_download_rx: &mut self.manual_download_rx,
             install_destination_prep_rx: &mut self.install_destination_prep_rx,
             background_destination_prep_workers: &mut self.background_destination_prep_workers,
             wizard_state: &mut self.wizard_state,
@@ -620,7 +624,9 @@ impl OrchestratorApp {
     }
 
     const fn slow_workers_active(&self) -> bool {
-        self.install_size_worker_rx.is_some() || !self.pending_folder_deletes.is_empty()
+        self.install_size_worker_rx.is_some()
+            || !self.pending_folder_deletes.is_empty()
+            || self.manual_download_rx.is_some()
     }
 
     fn drain_background_workers(&mut self) {
@@ -746,6 +752,9 @@ impl OrchestratorApp {
             &mut self.step2_progress_queue,
             &self.extract_progress,
         );
+        if self.nav == crate::ui::orchestrator::nav_destination::NavDestination::Install {
+            crate::ui::install::stage_downloading::drain_manual_download_events(self);
+        }
 
         app_step2_saved_log_flow::advance_pending_saved_log_flow(
             &mut self.wizard_state,
@@ -1325,6 +1334,8 @@ pub struct InstallPipelineResetSet<'a> {
         &'a mut Option<Receiver<crate::install_runtime::archive_skip_async::ArchiveSkipEvent>>,
     pub extract_parallel_rx:
         &'a mut Option<Receiver<crate::install_runtime::extract_parallel::ExtractAssetEvent>>,
+    pub manual_download_rx:
+        &'a mut Option<Receiver<crate::install_runtime::manual_download_watcher::WatchEvent>>,
     pub install_destination_prep_rx: &'a mut Option<PendingInstallDestinationPrep>,
     pub background_destination_prep_workers: &'a mut Vec<DestinationPrepJoinHandle>,
     pub wizard_state: &'a mut WizardState,
@@ -1340,6 +1351,7 @@ pub fn reset_install_pipeline_state(set: InstallPipelineResetSet<'_>) {
         stream_download_rx,
         archive_skip_rx,
         extract_parallel_rx,
+        manual_download_rx,
         install_destination_prep_rx,
         background_destination_prep_workers,
         wizard_state,
@@ -1353,6 +1365,7 @@ pub fn reset_install_pipeline_state(set: InstallPipelineResetSet<'_>) {
     *stream_download_rx = None;
     *archive_skip_rx = None;
     *extract_parallel_rx = None;
+    *manual_download_rx = None;
     if let Some(pending) = install_destination_prep_rx.take() {
         hold_destination_prep_worker_for_shutdown(
             background_destination_prep_workers,
@@ -1371,6 +1384,8 @@ pub fn reset_install_pipeline_state(set: InstallPipelineResetSet<'_>) {
     install_screen_state.clear_preview();
     install_screen_state.pipeline_kind = crate::ui::install::state_install::PipelineKind::Install;
     install_screen_state.stage = crate::ui::install::state_install::InstallStage::Gallery;
+    install_screen_state.manual_downloads =
+        crate::ui::install::state_install::ManualDownloadsState::default();
 
     if let Ok(mut g) = hash_progress.lock() {
         *g = None;
@@ -1778,66 +1793,15 @@ mod tests {
         (worker, release_worker)
     }
 
-    #[test]
-    fn reset_install_pipeline_state_drops_all_receivers_and_clears_wizard_latches() {
-        let (s_dl, r_dl) = std::sync::mpsc::channel::<
+    fn assert_pipeline_channels_closed(
+        s_dl: &std::sync::mpsc::Sender<
             crate::install_runtime::stream_downloader::StreamDownloadEvent,
-        >();
-        let (s_sk, r_sk) = std::sync::mpsc::channel::<
+        >,
+        s_sk: &std::sync::mpsc::Sender<
             crate::install_runtime::archive_skip_async::ArchiveSkipEvent,
-        >();
-        let (s_ex, r_ex) = std::sync::mpsc::channel::<
-            crate::install_runtime::extract_parallel::ExtractAssetEvent,
-        >();
-        let (destination_prep_worker, release_worker) = blocking_destination_prep_worker();
-        let mut stream = Some(r_dl);
-        let mut skip = Some(r_sk);
-        let mut extract = Some(r_ex);
-        let mut background_destination_prep_workers = Vec::new();
-        let mut dest_prep = Some(PendingInstallDestinationPrep {
-            token: DestinationPrepToken::new(
-                1,
-                DestinationPrepFlow::InstallPipeline,
-                r"D:\target",
-                None,
-            ),
-            destination: r"D:\target".to_string(),
-            game: Game::BGEE,
-            workflow: InstallWorkflow::PasteAndInstall,
-            code: "BIO-MODLIST-V1:test".to_string(),
-            worker: destination_prep_worker,
-        });
-        let mut ws = dirty_ws();
-        let mut iss = dirty_iss();
-        let hash = Arc::new(std::sync::Mutex::new(Some((10usize, 51usize))));
-        let extract_lock = Arc::new(std::sync::Mutex::new(Some((5usize, 51usize))));
-        let mut pending = Some("modlist-id".to_string());
-        let mut active = Some("modlist-id".to_string());
-
-        reset_install_pipeline_state(InstallPipelineResetSet {
-            stream_download_rx: &mut stream,
-            archive_skip_rx: &mut skip,
-            extract_parallel_rx: &mut extract,
-            install_destination_prep_rx: &mut dest_prep,
-            background_destination_prep_workers: &mut background_destination_prep_workers,
-            wizard_state: &mut ws,
-            install_screen_state: &mut iss,
-            hash_progress: &hash,
-            extract_progress: &extract_lock,
-            pending_reinstall_id: &mut pending,
-            active_install_modlist_id: &mut active,
-        });
-
-        assert!(stream.is_none(), "stream_download_rx dropped");
-        assert!(skip.is_none(), "archive_skip_rx dropped");
-        assert!(extract.is_none(), "extract_parallel_rx dropped");
-        assert!(dest_prep.is_none(), "install_destination_prep_rx dropped");
-        assert_eq!(
-            background_destination_prep_workers.len(),
-            1,
-            "running destination prep worker retained for shutdown join"
-        );
-
+        >,
+        s_ex: &std::sync::mpsc::Sender<crate::install_runtime::extract_parallel::ExtractAssetEvent>,
+    ) {
         assert!(
             s_dl.send(
                 crate::install_runtime::stream_downloader::StreamDownloadEvent::Finished(
@@ -1865,6 +1829,73 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn reset_install_pipeline_state_drops_all_receivers_and_clears_wizard_latches() {
+        let (s_dl, r_dl) = std::sync::mpsc::channel::<
+            crate::install_runtime::stream_downloader::StreamDownloadEvent,
+        >();
+        let (s_sk, r_sk) = std::sync::mpsc::channel::<
+            crate::install_runtime::archive_skip_async::ArchiveSkipEvent,
+        >();
+        let (s_ex, r_ex) = std::sync::mpsc::channel::<
+            crate::install_runtime::extract_parallel::ExtractAssetEvent,
+        >();
+        let (destination_prep_worker, release_worker) = blocking_destination_prep_worker();
+        let mut stream = Some(r_dl);
+        let mut skip = Some(r_sk);
+        let mut extract = Some(r_ex);
+        let mut manual_dl: Option<
+            Receiver<crate::install_runtime::manual_download_watcher::WatchEvent>,
+        > = None;
+        let mut background_destination_prep_workers = Vec::new();
+        let mut dest_prep = Some(PendingInstallDestinationPrep {
+            token: DestinationPrepToken::new(
+                1,
+                DestinationPrepFlow::InstallPipeline,
+                r"D:\target",
+                None,
+            ),
+            destination: r"D:\target".to_string(),
+            game: Game::BGEE,
+            workflow: InstallWorkflow::PasteAndInstall,
+            code: "BIO-MODLIST-V1:test".to_string(),
+            worker: destination_prep_worker,
+        });
+        let mut ws = dirty_ws();
+        let mut iss = dirty_iss();
+        let hash = Arc::new(std::sync::Mutex::new(Some((10usize, 51usize))));
+        let extract_lock = Arc::new(std::sync::Mutex::new(Some((5usize, 51usize))));
+        let mut pending = Some("modlist-id".to_string());
+        let mut active = Some("modlist-id".to_string());
+
+        reset_install_pipeline_state(InstallPipelineResetSet {
+            stream_download_rx: &mut stream,
+            archive_skip_rx: &mut skip,
+            extract_parallel_rx: &mut extract,
+            manual_download_rx: &mut manual_dl,
+            install_destination_prep_rx: &mut dest_prep,
+            background_destination_prep_workers: &mut background_destination_prep_workers,
+            wizard_state: &mut ws,
+            install_screen_state: &mut iss,
+            hash_progress: &hash,
+            extract_progress: &extract_lock,
+            pending_reinstall_id: &mut pending,
+            active_install_modlist_id: &mut active,
+        });
+
+        assert!(stream.is_none(), "stream_download_rx dropped");
+        assert!(skip.is_none(), "archive_skip_rx dropped");
+        assert!(extract.is_none(), "extract_parallel_rx dropped");
+        assert!(dest_prep.is_none(), "install_destination_prep_rx dropped");
+        assert_eq!(
+            background_destination_prep_workers.len(),
+            1,
+            "running destination prep worker retained for shutdown join"
+        );
+
+        assert_pipeline_channels_closed(&s_dl, &s_sk, &s_ex);
         drop((s_dl, s_sk, s_ex));
         release_worker
             .send(())
@@ -1896,6 +1927,9 @@ mod tests {
         let mut extract: Option<
             Receiver<crate::install_runtime::extract_parallel::ExtractAssetEvent>,
         > = None;
+        let mut manual_dl: Option<
+            Receiver<crate::install_runtime::manual_download_watcher::WatchEvent>,
+        > = None;
         let mut dest_prep: Option<PendingInstallDestinationPrep> = None;
         let mut background_destination_prep_workers = Vec::new();
         let mut ws = dirty_ws();
@@ -1909,6 +1943,7 @@ mod tests {
             stream_download_rx: &mut stream,
             archive_skip_rx: &mut skip,
             extract_parallel_rx: &mut extract,
+            manual_download_rx: &mut manual_dl,
             install_destination_prep_rx: &mut dest_prep,
             background_destination_prep_workers: &mut background_destination_prep_workers,
             wizard_state: &mut ws,
@@ -1978,6 +2013,9 @@ mod tests {
         let mut stream = Some(r_dl);
         let mut skip = Some(r_sk);
         let mut extract = Some(r_ex);
+        let mut manual_dl: Option<
+            Receiver<crate::install_runtime::manual_download_watcher::WatchEvent>,
+        > = None;
         let mut dest_prep: Option<PendingInstallDestinationPrep> = None;
         let mut background_destination_prep_workers = Vec::new();
         let mut ws = WizardState::default();
@@ -1990,6 +2028,7 @@ mod tests {
             stream_download_rx: &mut stream,
             archive_skip_rx: &mut skip,
             extract_parallel_rx: &mut extract,
+            manual_download_rx: &mut manual_dl,
             install_destination_prep_rx: &mut dest_prep,
             background_destination_prep_workers: &mut background_destination_prep_workers,
             wizard_state: &mut ws,
@@ -2098,5 +2137,161 @@ mod tests {
              waiting for a scan that never starts)"
         );
         drop(s_ex);
+    }
+
+    #[test]
+    fn drain_runs_from_orchestrator_frame_path() {
+        struct DrainTestRoot {
+            path: std::path::PathBuf,
+        }
+        impl DrainTestRoot {
+            fn new() -> Self {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                let path = std::env::temp_dir().join(format!(
+                    "bio_manualdl_{}_{}_orchdrain",
+                    std::process::id(),
+                    COUNTER.fetch_add(1, Ordering::Relaxed)
+                ));
+                std::fs::create_dir_all(&path).unwrap();
+                Self { path }
+            }
+        }
+        impl Drop for DrainTestRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        let root = DrainTestRoot::new();
+        let dropped = root.path.join("Ascension.zip");
+        std::fs::write(&dropped, b"content").unwrap();
+        let archive_dir = root.path.join("archives");
+
+        let mut app = OrchestratorApp::new_isolated_for_test("manualdl-drain-frame");
+        app.wizard_state.step1.mods_archive_folder = archive_dir.to_string_lossy().into_owned();
+        app.wizard_state.step2.update_selected_manual_downloads =
+            vec![crate::app::state::ManualDownloadRequest {
+                game_tab: "BGEE".to_string(),
+                tp_file: "ascension/setup-ascension.tp2".to_string(),
+                label: "Ascension".to_string(),
+                source_id: String::new(),
+                page_url: String::new(),
+                reason: crate::app::state::ManualDownloadReason::NotAutoResolvable,
+                aliases: Vec::new(),
+            }];
+        app.install_screen_state.manual_downloads.rows =
+            vec![crate::ui::install::state_install::ManualDownloadRow {
+                label: "Ascension".to_string(),
+                from: "nexusmods.com".to_string(),
+                page_url: String::new(),
+                status: crate::ui::install::state_install::ManualRowStatus::Waiting,
+            }];
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::install_runtime::manual_download_watcher::WatchEvent::Candidate(
+                crate::install_runtime::manual_archive_probe::ArchiveProbe {
+                    path: dropped.clone(),
+                    file_name: "Ascension.zip".to_string(),
+                    size: std::fs::metadata(&dropped).unwrap().len(),
+                    hash: None,
+                    tp2_names: vec!["setup-ascension.tp2".to_string()],
+                    format: crate::install_runtime::manual_archive_probe::ProbeFormat::Zip,
+                },
+            ),
+        )
+        .expect("send candidate");
+        drop(tx);
+        app.manual_download_rx = Some(rx);
+        app.nav = crate::ui::orchestrator::nav_destination::NavDestination::Install;
+
+        app.poll_step2_channels();
+
+        assert_eq!(
+            app.install_screen_state.manual_downloads.rows[0].status,
+            crate::ui::install::state_install::ManualRowStatus::Found,
+            "the orchestrator's per-frame drain entry matches a seeded Candidate"
+        );
+    }
+
+    #[test]
+    fn drain_waits_while_not_on_install_page() {
+        struct DrainTestRoot {
+            path: std::path::PathBuf,
+        }
+        impl DrainTestRoot {
+            fn new() -> Self {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                let path = std::env::temp_dir().join(format!(
+                    "bio_manualdl_{}_{}_orchdrainwaits",
+                    std::process::id(),
+                    COUNTER.fetch_add(1, Ordering::Relaxed)
+                ));
+                std::fs::create_dir_all(&path).unwrap();
+                Self { path }
+            }
+        }
+        impl Drop for DrainTestRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        let root = DrainTestRoot::new();
+        let dropped = root.path.join("Ascension.zip");
+        std::fs::write(&dropped, b"content").unwrap();
+        let archive_dir = root.path.join("archives");
+
+        let mut app = OrchestratorApp::new_isolated_for_test("manualdl-drain-waits");
+        app.wizard_state.step1.mods_archive_folder = archive_dir.to_string_lossy().into_owned();
+        app.wizard_state.step2.update_selected_manual_downloads =
+            vec![crate::app::state::ManualDownloadRequest {
+                game_tab: "BGEE".to_string(),
+                tp_file: "ascension/setup-ascension.tp2".to_string(),
+                label: "Ascension".to_string(),
+                source_id: String::new(),
+                page_url: String::new(),
+                reason: crate::app::state::ManualDownloadReason::NotAutoResolvable,
+                aliases: Vec::new(),
+            }];
+        app.install_screen_state.manual_downloads.rows =
+            vec![crate::ui::install::state_install::ManualDownloadRow {
+                label: "Ascension".to_string(),
+                from: "nexusmods.com".to_string(),
+                page_url: String::new(),
+                status: crate::ui::install::state_install::ManualRowStatus::Waiting,
+            }];
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::install_runtime::manual_download_watcher::WatchEvent::Candidate(
+                crate::install_runtime::manual_archive_probe::ArchiveProbe {
+                    path: dropped.clone(),
+                    file_name: "Ascension.zip".to_string(),
+                    size: std::fs::metadata(&dropped).unwrap().len(),
+                    hash: None,
+                    tp2_names: vec!["setup-ascension.tp2".to_string()],
+                    format: crate::install_runtime::manual_archive_probe::ProbeFormat::Zip,
+                },
+            ),
+        )
+        .expect("send candidate");
+        drop(tx);
+        app.manual_download_rx = Some(rx);
+        app.nav = crate::ui::orchestrator::nav_destination::NavDestination::Home;
+
+        app.poll_step2_channels();
+
+        assert_eq!(
+            app.install_screen_state.manual_downloads.rows[0].status,
+            crate::ui::install::state_install::ManualRowStatus::Waiting,
+            "a match landing while another page is open waits in the channel"
+        );
+        assert!(
+            app.manual_download_rx.is_some(),
+            "the receiver stays open while the Install page is not showing"
+        );
     }
 }

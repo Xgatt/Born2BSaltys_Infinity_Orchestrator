@@ -27,6 +27,7 @@ pub const fn weidu_log_confirm<'a>(title: &'a str, body: &'a str) -> ConfirmDial
         title,
         body,
         confirm_label: "Pick a weidu.log...",
+        cancel_label: "Cancel",
         danger: true,
     }
 }

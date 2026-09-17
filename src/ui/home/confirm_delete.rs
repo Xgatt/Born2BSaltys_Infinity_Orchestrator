@@ -52,6 +52,7 @@ pub const fn delete_confirm<'a>(
         title,
         body,
         confirm_label: "Delete",
+        cancel_label: "Cancel",
         danger: true,
     }
 }
@@ -67,6 +68,7 @@ pub const fn reinstall_confirm<'a>(
         title,
         body,
         confirm_label: "Reinstall",
+        cancel_label: "Cancel",
         danger: true,
     }
 }

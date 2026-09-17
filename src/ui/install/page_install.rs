@@ -401,6 +401,9 @@ fn downloading_stage(
                 DownloadingOutcome::Advance => {
                     Some(InstallRequest::Stage(InstallStage::InstallingStub))
                 }
+                DownloadingOutcome::OpenWorkspace => {
+                    open_workspace_or_reset_to_gallery(orchestrator)
+                }
                 DownloadingOutcome::Stay => None,
             }
         }
@@ -417,6 +420,31 @@ fn downloading_stage(
             ForkDownloadOutcome::Stay => None,
         },
     }
+}
+
+fn open_workspace_or_reset_to_gallery(
+    orchestrator: &mut OrchestratorApp,
+) -> Option<InstallRequest> {
+    let Some(id) = orchestrator.active_install_modlist_id.clone() else {
+        orchestrator
+            .notification_manager
+            .error("The install lost track of its modlist; start it again from the gallery.");
+        orchestrator.reset_install_screen_to_gallery();
+        return Some(InstallRequest::Stage(InstallStage::Gallery));
+    };
+    let labels = orchestrator
+        .wizard_state
+        .step2
+        .skipped_manual_downloads
+        .clone();
+    fork_route::route_to_workspace(orchestrator, id);
+    let n = labels.len();
+    let word = if n == 1 { "mod" } else { "mods" };
+    orchestrator.notification_manager.warn_persistent(format!(
+        "Continued without {n} {word}: {}",
+        labels.join(", ")
+    ));
+    None
 }
 
 fn installing_stage(
@@ -674,6 +702,28 @@ mod tests {
                 .as_ref()
                 .and_then(|p| p.name.clone()),
             original_name
+        );
+    }
+
+    #[test]
+    fn open_workspace_without_id_resets_to_gallery() {
+        use egui_toast::ToastKind;
+
+        let mut app = orch_for_install_test();
+        app.install_screen_state.stage = InstallStage::Downloading;
+        app.active_install_modlist_id = None;
+
+        let request = open_workspace_or_reset_to_gallery(&mut app);
+
+        assert_eq!(request, Some(InstallRequest::Stage(InstallStage::Gallery)));
+        assert_eq!(app.install_screen_state.stage, InstallStage::Gallery);
+        let history = app.notification_manager.history();
+        assert_eq!(history.len(), 1);
+        let record = history.back().unwrap();
+        assert_eq!(record.kind, ToastKind::Error);
+        assert_eq!(
+            record.text,
+            "The install lost track of its modlist; start it again from the gallery."
         );
     }
 

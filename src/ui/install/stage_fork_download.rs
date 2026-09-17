@@ -40,7 +40,8 @@ pub fn render(
     match stage_downloading::render(ui, palette, fork_download_copy(), progress) {
         stage_downloading::DownloadingOutcome::Cancel => ForkDownloadOutcome::Cancel,
         stage_downloading::DownloadingOutcome::Advance => ForkDownloadOutcome::Import,
-        stage_downloading::DownloadingOutcome::Stay => ForkDownloadOutcome::Stay,
+        stage_downloading::DownloadingOutcome::Stay
+        | stage_downloading::DownloadingOutcome::OpenWorkspace => ForkDownloadOutcome::Stay,
     }
 }
 
@@ -98,12 +99,13 @@ pub fn render_live(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> For
 
     let progress = build_and_hold_progress(orchestrator);
     let arm_error = orchestrator.install_screen_state.pipeline_arm_error.clone();
-    let back_clicked = render_chrome(
+    let (back_clicked, _) = render_chrome(
         ui,
         palette,
         fork_download_copy(),
         &progress,
         arm_error.as_deref(),
+        None,
     );
 
     if back_clicked {
@@ -115,7 +117,7 @@ pub fn render_live(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> For
     ForkDownloadOutcome::Stay
 }
 
-fn fork_extract_complete(orchestrator: &OrchestratorApp) -> bool {
+pub(super) fn fork_extract_complete(orchestrator: &OrchestratorApp) -> bool {
     let flags = orchestrator.install_screen_state.pipeline_flags;
     let step2 = &orchestrator.wizard_state.step2;
     let archives_observed = step2.update_selected_extracted_sources.len()

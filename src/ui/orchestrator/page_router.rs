@@ -180,6 +180,12 @@ fn flush_workspace_on_nav_away(orchestrator: &mut OrchestratorApp) {
         return;
     }
 
+    orchestrator
+        .wizard_state
+        .step2
+        .skipped_manual_downloads
+        .clear();
+
     if restore_pending(&orchestrator.workspace_view.step2) {
         orchestrator.workspace_view.loaded_workspace_id = None;
         return;
@@ -247,7 +253,10 @@ fn clear_pending_reinstall_on_nav_away_from_install(orchestrator: &mut Orchestra
              pending_reinstall_id cleared — modlist stays Installed (SPEC §3.1)"
         );
     }
-    if orchestrator.active_install_modlist_id.take().is_some() {
+    if crate::ui::install::state_install::install_stage_is_idle(
+        orchestrator.install_screen_state.stage,
+    ) && orchestrator.active_install_modlist_id.take().is_some()
+    {
         tracing::debug!(
             target = "orchestrator",
             "Install-Modlist install did not reach a clean exit \
@@ -793,6 +802,50 @@ mod tests {
         assert!(
             dir.to_string_lossy().contains("OPEN-WS"),
             "workspace nav takes priority over the active pipeline id"
+        );
+    }
+
+    #[test]
+    fn skipped_note_clears_when_another_workspace_opens() {
+        let mut app = OrchestratorApp::new_isolated_for_test("router-skipped-clear");
+        app.workspace_view.loaded_workspace_id = Some("A".to_string());
+        app.nav = NavDestination::Workspace {
+            modlist_id: Some("B".to_string()),
+        };
+        app.wizard_state.step2.skipped_manual_downloads = vec!["Ascension".to_string()];
+
+        flush_workspace_on_nav_away(&mut app);
+
+        assert!(
+            app.wizard_state.step2.skipped_manual_downloads.is_empty(),
+            "leaving a loaded workspace for another one clears the skipped note"
+        );
+        assert!(app.workspace_view.loaded_workspace_id.is_none());
+    }
+
+    #[test]
+    fn nav_away_keeps_active_id_while_downloading() {
+        use crate::ui::install::state_install::InstallStage;
+
+        let mut app = OrchestratorApp::new_isolated_for_test("router-nav-away-downloading");
+        app.active_install_modlist_id = Some("MODLIST-1".to_string());
+        app.install_screen_state.stage = InstallStage::Downloading;
+        app.nav = NavDestination::Home;
+
+        clear_pending_reinstall_on_nav_away_from_install(&mut app);
+
+        assert_eq!(
+            app.active_install_modlist_id.as_deref(),
+            Some("MODLIST-1"),
+            "a live Downloading stage must not lose the modlist id on nav-away"
+        );
+
+        app.install_screen_state.stage = InstallStage::Gallery;
+        clear_pending_reinstall_on_nav_away_from_install(&mut app);
+
+        assert!(
+            app.active_install_modlist_id.is_none(),
+            "an idle install stage still clears the id on nav-away as before"
         );
     }
 }
