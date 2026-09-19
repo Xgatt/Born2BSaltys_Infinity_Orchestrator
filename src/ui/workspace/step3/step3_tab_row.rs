@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::state::WizardState;
 use crate::app::step3_toolbar::Step3ToolbarSummary;
 use crate::ui::orchestrator::widgets::{BtnOpts, redesign_btn};
@@ -77,7 +78,8 @@ struct Step3RowState {
 
 impl Step3RowState {
     fn from_state(state: &WizardState, summary: &Step3ToolbarSummary) -> Self {
-        let active_is_bgee = state.step3.active_game_tab == "BGEE";
+        let active_is_bgee =
+            game_authority::slot_for_tab(&state.step3.active_game_tab) == GameSlot::First;
         let (conflict_count, conflict_target) = if active_is_bgee {
             (summary.bgee_summary.0, summary.bgee_target.clone())
         } else {

@@ -4,6 +4,7 @@
 use crate::app::compat_issue::CompatIssue;
 use crate::app::compat_popup_targets::issue_related_target;
 use crate::app::compat_step3_rules;
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::selection_jump::{
     selected_step2_jump_target, step2_jump_to_target, step3_jump_to_target,
 };
@@ -269,7 +270,7 @@ fn collect_step2_targets(
     game_tab: &str,
     filter: &str,
 ) -> Vec<PopupCompatTarget> {
-    let mods = if game_tab.eq_ignore_ascii_case("BGEE") {
+    let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &state.step2.bgee_mods
     } else {
         &state.step2.bg2ee_mods
@@ -304,7 +305,7 @@ fn collect_step3_targets(
     game_tab: &str,
     filter: &str,
 ) -> Vec<PopupCompatTarget> {
-    let (mods, items) = if game_tab.eq_ignore_ascii_case("BGEE") {
+    let (mods, items) = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         (&state.step2.bgee_mods, &state.step3.bgee_items)
     } else {
         (&state.step2.bg2ee_mods, &state.step3.bg2ee_items)
@@ -470,5 +471,13 @@ mod tests {
             }
             _ => panic!("expected a component selection"),
         }
+    }
+
+    #[test]
+    fn compat_popup_nav_routes_iwdee_to_the_first_container() {
+        let state = state_with(vec![component("1", true, "conflict")]);
+        let targets = collect_step2_targets(&state, "IWDEE", "All");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].tp_file, "mod.tp2");
     }
 }

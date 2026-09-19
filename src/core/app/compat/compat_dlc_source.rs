@@ -122,6 +122,7 @@ pub(crate) enum SourceRemedy {
     OrderMerger,
     ChangeSource,
     CleanSource,
+    SetSourceFolder,
     None,
 }
 
@@ -203,16 +204,7 @@ pub(crate) fn preview_issue(
 
 #[must_use]
 pub(crate) fn residue_issue(step1: &Step1State, game_install: &str) -> Option<SourceNotice> {
-    let folders: &[(&str, &str)] = match game_install {
-        "BGEE" => &[("BGEE", step1.bgee_game_folder.trim())],
-        "BG2EE" => &[("BG2EE", step1.bg2ee_game_folder.trim())],
-        "IWDEE" => &[("IWDEE", step1.iwdee_game_folder.trim())],
-        "EET" => &[
-            ("BGEE", bgee_source_for(step1, "EET")),
-            ("BG2EE", bg2ee_source_for(step1, "EET")),
-        ],
-        _ => &[],
-    };
+    let folders = crate::app::game_authority::source_game_folders(step1, game_install);
     let sentences = folders
         .iter()
         .filter(|(_, folder)| !folder.is_empty())

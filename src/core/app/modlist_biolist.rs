@@ -8,7 +8,10 @@ use serde::Serialize;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::app::modlist_share::{ForkAncestor, ModlistSharePayload, base64url_decode};
+use crate::app::game_authority;
+use crate::app::modlist_share::{
+    ForkAncestor, ModlistSharePayload, base64url_decode, first_slot_weidu_text,
+};
 use crate::registry::share_export::ArchiveMeta;
 
 pub const BIOLIST_EXTENSION: &str = "biolist";
@@ -45,8 +48,14 @@ pub fn build_biolist(code: &str) -> Result<Vec<u8>, String> {
     write_entry(&mut writer, "reference/README.txt", README_TEXT.as_bytes())?;
     write_reference_modlist(&mut writer, &payload)?;
 
-    if let Some(text) = non_empty(payload.weidu_logs.bgee.as_deref()) {
-        write_entry(&mut writer, "reference/weidu/BGEE.log", text.as_bytes())?;
+    if let Some(text) = non_empty(first_slot_weidu_text(&payload.weidu_logs)) {
+        let entry_name = format!(
+            "reference/weidu/{}",
+            game_authority::reference_log_name(game_authority::first_slot_tab(
+                &payload.game_install
+            ))
+        );
+        write_entry(&mut writer, &entry_name, text.as_bytes())?;
     }
     if let Some(text) = non_empty(payload.weidu_logs.bg2ee.as_deref()) {
         write_entry(&mut writer, "reference/weidu/BG2EE.log", text.as_bytes())?;
@@ -318,6 +327,16 @@ mod tests {
         .to_string()
     }
 
+    fn minimal_iwdee_only_payload_json() -> String {
+        r#"{
+            "format_version": 1,
+            "game_install": "IWDEE",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "iwdee": "~MOD/MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#
+        .to_string()
+    }
+
     fn entry_names(bytes: &[u8]) -> Vec<String> {
         let mut archive = ZipArchive::new(Cursor::new(bytes.to_vec())).expect("open zip");
         let mut names = Vec::with_capacity(archive.len());
@@ -437,6 +456,37 @@ mod tests {
         let modlist_toml = entry_text(&bytes, "reference/modlist.toml");
         let parsed: toml::Value = toml::from_str(&modlist_toml).expect("modlist.toml parses");
         assert!(parsed.get("unresolved_mods").is_none());
+    }
+
+    #[test]
+    fn iwdee_biolist_reference_is_iwdee_log() {
+        let code = crate::app::modlist_share::encode_share_payload_text(
+            &minimal_iwdee_only_payload_json(),
+        )
+        .expect("encode");
+
+        let bytes = build_biolist(&code).expect("build biolist");
+        let names = entry_names(&bytes);
+
+        assert!(names.contains(&"reference/weidu/IWDEE.log".to_string()));
+        assert!(!names.contains(&"reference/weidu/BGEE.log".to_string()));
+        assert_eq!(
+            entry_text(&bytes, "reference/weidu/IWDEE.log"),
+            "~MOD/MOD.TP2~ #0 #0 // A component: 1.0"
+        );
+    }
+
+    #[test]
+    fn bgee_biolist_reference_is_still_bgee_log() {
+        let code =
+            crate::app::modlist_share::encode_share_payload_text(&minimal_bgee_only_payload_json())
+                .expect("encode");
+
+        let bytes = build_biolist(&code).expect("build biolist");
+        let names = entry_names(&bytes);
+
+        assert!(names.contains(&"reference/weidu/BGEE.log".to_string()));
+        assert!(!names.contains(&"reference/weidu/IWDEE.log".to_string()));
     }
 
     #[test]

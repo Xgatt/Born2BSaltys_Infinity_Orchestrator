@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::app::game_authority;
 use crate::app::state::WizardState;
 use crate::app::terminal::EmbeddedTerminal;
 use crate::ui::shared::redesign_tokens::ThemePalette;
@@ -60,7 +61,8 @@ fn step5_title(state: &WizardState, terminal: Option<&EmbeddedTerminal>) -> Stri
     let second_progress = mod_progress_for_items(&current_tp2, &state.step3.bg2ee_items);
     match (first_progress, second_progress) {
         (Some((index, total)), None) => {
-            format!("{STEP5_TITLE} — Installing BGEE mod {index}/{total}")
+            let first_slot_name = game_authority::first_slot_tab(&state.step1.game_install);
+            format!("{STEP5_TITLE} — Installing {first_slot_name} mod {index}/{total}")
         }
         (None, Some((index, total))) => {
             format!("{STEP5_TITLE} — Installing BG2EE mod {index}/{total}")

@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::app::controller::log_apply::{apply_log_to_mods, normalize_path_key};
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::state::{Step1State, Step2LogPendingDownload, WizardState};
 use crate::mods::component::Component;
 use crate::mods::log_file::LogFile;
@@ -99,7 +100,11 @@ pub(crate) fn apply_weidu_log_selection_from_path(
         &mut state.step2.bgee_mods,
         &mut state.step2.bg2ee_mods,
     );
-    let label = if bgee { "BGEE" } else { "BG2EE" };
+    let label = if bgee {
+        game_authority::first_slot_tab(&state.step1.game_install)
+    } else {
+        "BG2EE"
+    };
     state
         .step2
         .log_pending_downloads
@@ -128,7 +133,7 @@ fn build_log_pending_downloads(
     log: &LogFile,
     game_tab: &str,
 ) -> Vec<Step2LogPendingDownload> {
-    let mods = if game_tab == "BGEE" {
+    let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &state.step2.bgee_mods
     } else {
         &state.step2.bg2ee_mods
@@ -262,7 +267,56 @@ pub(crate) fn resolve_bg2_weidu_log_path(s: &Step1State) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::requested_version_text;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    struct TempRoot {
+        path: PathBuf,
+    }
+
+    impl TempRoot {
+        fn new() -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("bio_step2_log_test_{}_{id}", std::process::id()));
+            std::fs::create_dir_all(&path).expect("create temp root");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn step2_log_label_names_the_lists_own_tab() {
+        let root = TempRoot::new();
+        let log_path = root.path.join("weidu.log");
+        std::fs::write(&log_path, "").expect("write empty log");
+
+        let mut state = WizardState {
+            step1: Step1State {
+                game_install: "IWDEE".to_string(),
+                ..Step1State::default()
+            },
+            ..WizardState::default()
+        };
+        apply_weidu_log_selection_from_path(&mut state, true, Some(log_path));
+
+        assert!(
+            state
+                .step2
+                .scan_status
+                .starts_with("IWDEE selected from log"),
+            "unexpected status: {}",
+            state.step2.scan_status
+        );
+    }
 
     #[test]
     fn keeps_version_like_labels() {

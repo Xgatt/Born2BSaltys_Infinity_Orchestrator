@@ -527,6 +527,11 @@ pub(crate) fn refresh_source_compat_issue(
     state.unresolved_sources_issue = state.parsed_preview.as_ref().and_then(|preview| {
         crate::app::compat_dlc_source::unresolved_sources_issue(&preview.unresolved_mods)
     });
+    state.missing_source_issue = state.parsed_preview.as_ref().and_then(|preview| {
+        crate::app::game_authority::missing_source_message(
+            &crate::app::game_authority::missing_source_folders(step1, &preview.game_install),
+        )
+    });
 }
 
 #[cfg(test)]
@@ -676,6 +681,56 @@ mod tests {
         }
         refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
         assert!(app.install_screen_state.unresolved_sources_issue.is_none());
+    }
+
+    #[test]
+    fn refresh_fills_the_missing_source_slot_for_an_iwdee_preview() {
+        use crate::app::modlist_share::ModlistSharePreview;
+
+        fn preview(game_install: &str) -> ModlistSharePreview {
+            ModlistSharePreview {
+                bio_version: String::new(),
+                game_install: game_install.to_string(),
+                install_mode: "custom".to_string(),
+                bgee_entries: 0,
+                bg2ee_entries: 0,
+                has_source_overrides: false,
+                has_installed_refs: false,
+                bgee_log_text: String::new(),
+                bg2ee_log_text: String::new(),
+                source_overrides_text: String::new(),
+                installed_refs_text: String::new(),
+                mod_config_count: 0,
+                mod_configs_text: String::new(),
+                allow_auto_install: true,
+                name: None,
+                author: None,
+                description: None,
+                forked_from: Vec::new(),
+                unresolved_mods: Vec::new(),
+            }
+        }
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.iwdee_game_folder.clear();
+        app.install_screen_state.parsed_preview = Some(preview("IWDEE"));
+
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert_eq!(
+            app.install_screen_state.missing_source_issue,
+            Some(
+                "The IWDEE game folder is not set. Set it in Settings \u{2192} Paths.".to_string()
+            )
+        );
+
+        app.wizard_state.step1.iwdee_game_folder = "D:\\games\\iwdee".to_string();
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert!(app.install_screen_state.missing_source_issue.is_none());
+
+        app.wizard_state.step1.bgee_game_folder = "D:\\games\\bgee".to_string();
+        app.install_screen_state.parsed_preview = Some(preview("BGEE"));
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert!(app.install_screen_state.missing_source_issue.is_none());
     }
 
     #[test]

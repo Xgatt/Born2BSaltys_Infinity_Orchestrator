@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::warn;
 
+use crate::app::game_authority;
 use crate::app::state::WizardState;
 use crate::app::step5::diagnostics::build_weidu_export_lines;
 
@@ -74,11 +75,8 @@ pub(crate) fn export_modlist_share_code_with(
     sources: &ShareExportSources,
 ) -> Result<String, String> {
     let weidu_logs = export_weidu_logs(state, sources.log_source)?;
-    if relevant_weidu_text_is_empty(
-        state,
-        weidu_logs.bgee.as_deref(),
-        weidu_logs.bg2ee.as_deref(),
-    ) {
+    let first_slot_export_text = weidu_logs.bgee.as_deref().or(weidu_logs.iwdee.as_deref());
+    if relevant_weidu_text_is_empty(state, first_slot_export_text, weidu_logs.bg2ee.as_deref()) {
         return Err("No WeiDU entries available to export.".to_string());
     }
 
@@ -105,10 +103,25 @@ pub(crate) fn export_modlist_share_code_with(
             "files": mod_configs,
         },
     });
+    move_first_slot_log_to_iwdee_key(&mut payload, weidu_logs.iwdee.as_deref());
     insert_unresolved_mods(&mut payload, &sources.unresolved_mods);
     insert_export_provenance(&mut payload, state);
     let payload_text = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
     encode_share_payload_text(&payload_text)
+}
+
+fn move_first_slot_log_to_iwdee_key(payload: &mut serde_json::Value, iwdee_text: Option<&str>) {
+    let Some(text) = iwdee_text else {
+        return;
+    };
+    let Some(logs) = payload
+        .get_mut("weidu_logs")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return;
+    };
+    logs.remove("bgee");
+    logs.insert("iwdee".to_string(), json!(text));
 }
 
 fn insert_unresolved_mods(payload: &mut serde_json::Value, unresolved_mods: &[String]) {
@@ -301,6 +314,15 @@ pub(crate) struct ForkAncestor {
 pub(crate) struct ModlistShareWeiduLogs {
     pub(crate) bgee: Option<String>,
     pub(crate) bg2ee: Option<String>,
+    #[serde(default)]
+    pub(crate) iwdee: Option<String>,
+}
+
+pub(crate) fn first_slot_weidu_text(logs: &ModlistShareWeiduLogs) -> Option<&str> {
+    logs.iwdee
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+        .or(logs.bgee.as_deref())
 }
 
 #[derive(Default, Deserialize)]
@@ -350,7 +372,7 @@ pub(crate) fn decode_share_payload(code: &str) -> Result<ModlistSharePayload, St
 fn share_preview(payload: &ModlistSharePayload) -> Result<ModlistSharePreview, String> {
     let install_mode =
         crate::app::state::Step1State::normalize_install_mode(&payload.install_mode).to_string();
-    let first_game_entries = count_weidu_entries(payload.weidu_logs.bgee.as_deref());
+    let first_game_entries = count_weidu_entries(first_slot_weidu_text(&payload.weidu_logs));
     let second_game_entries = count_weidu_entries(payload.weidu_logs.bg2ee.as_deref());
     if match payload.game_install.as_str() {
         "EET" => first_game_entries == 0 && second_game_entries == 0,
@@ -389,7 +411,9 @@ fn share_preview(payload: &ModlistSharePayload) -> Result<ModlistSharePreview, S
             .mod_installed_refs_toml
             .as_deref()
             .is_some_and(|text| !text.trim().is_empty()),
-        bgee_log_text: payload.weidu_logs.bgee.clone().unwrap_or_default(),
+        bgee_log_text: first_slot_weidu_text(&payload.weidu_logs)
+            .unwrap_or_default()
+            .to_string(),
         bg2ee_log_text: payload.weidu_logs.bg2ee.clone().unwrap_or_default(),
         source_overrides_text: payload
             .source_overrides
@@ -437,8 +461,8 @@ fn write_imported_weidu_logs(
             &import_log_target_path(step1, false)?,
         ),
         _ => write_imported_log(
-            "BGEE",
-            payload.weidu_logs.bgee.as_deref(),
+            game_authority::first_slot_tab(&step1.game_install),
+            first_slot_weidu_text(&payload.weidu_logs),
             &import_log_target_path(step1, true)?,
         ),
     }
@@ -530,7 +554,11 @@ fn import_log_target_path(
         if value.trim().is_empty() {
             return Err(format!(
                 "Set {} WeiDU Log File before importing.",
-                if bgee { "BGEE" } else { "BG2EE" }
+                if bgee {
+                    game_authority::first_slot_tab(&step1.game_install)
+                } else {
+                    "BG2EE"
+                }
             ));
         }
         return Ok(PathBuf::from(value.trim()));
@@ -544,7 +572,11 @@ fn import_log_target_path(
     if value.trim().is_empty() {
         return Err(format!(
             "Set {} WeiDU Log Folder before importing.",
-            if bgee { "BGEE" } else { "BG2EE" }
+            if bgee {
+                game_authority::first_slot_tab(&step1.game_install)
+            } else {
+                "BG2EE"
+            }
         ));
     }
     Ok(PathBuf::from(value.trim()).join("weidu.log"))
@@ -581,6 +613,18 @@ fn count_weidu_entries(text: Option<&str>) -> usize {
 struct ExportWeiduLogs {
     bgee: Option<String>,
     bg2ee: Option<String>,
+    iwdee: Option<String>,
+}
+
+fn first_slot_export_fields(
+    game_install: &str,
+    first_slot_text: Option<String>,
+) -> (Option<String>, Option<String>) {
+    if game_authority::share_log_key(game_authority::first_slot_tab(game_install)) == "iwdee" {
+        (None, first_slot_text)
+    } else {
+        (first_slot_text, None)
+    }
 }
 
 fn export_weidu_logs(
@@ -588,22 +632,32 @@ fn export_weidu_logs(
     log_source: ExportLogSource,
 ) -> Result<ExportWeiduLogs, String> {
     if state.step1.installs_exactly_from_weidu_logs() {
+        let first_slot_text = read_exact_source_weidu_log(
+            state,
+            crate::app::app_step2_log::resolve_bgee_weidu_log_path,
+        )?;
+        let (bgee, iwdee) = first_slot_export_fields(&state.step1.game_install, first_slot_text);
         return Ok(ExportWeiduLogs {
-            bgee: read_exact_source_weidu_log(
-                state,
-                crate::app::app_step2_log::resolve_bgee_weidu_log_path,
-            )?,
+            bgee,
             bg2ee: read_exact_source_weidu_log(
                 state,
                 crate::app::app_step2_log::resolve_bg2_weidu_log_path,
             )?,
+            iwdee,
         });
     }
     match log_source {
-        ExportLogSource::Rebuilt => Ok(ExportWeiduLogs {
-            bgee: Some(rebuilt_weidu_log_text(&state.step3.bgee_items)),
-            bg2ee: Some(rebuilt_weidu_log_text(&state.step3.bg2ee_items)),
-        }),
+        ExportLogSource::Rebuilt => {
+            let (bgee, iwdee) = first_slot_export_fields(
+                &state.step1.game_install,
+                Some(rebuilt_weidu_log_text(&state.step3.bgee_items)),
+            );
+            Ok(ExportWeiduLogs {
+                bgee,
+                bg2ee: Some(rebuilt_weidu_log_text(&state.step3.bg2ee_items)),
+                iwdee,
+            })
+        }
         ExportLogSource::Installed => Ok(installed_weidu_logs(state)),
     }
 }
@@ -619,6 +673,7 @@ fn installed_weidu_logs(state: &WizardState) -> ExportWeiduLogs {
                 &state.step1.eet_new_dir,
                 &state.step3.bg2ee_items,
             )),
+            iwdee: None,
         },
         "BG2EE" => ExportWeiduLogs {
             bgee: Some(rebuilt_weidu_log_text(&state.step3.bgee_items)),
@@ -626,14 +681,22 @@ fn installed_weidu_logs(state: &WizardState) -> ExportWeiduLogs {
                 &state.step1.generate_directory,
                 &state.step3.bg2ee_items,
             )),
+            iwdee: None,
         },
-        _ => ExportWeiduLogs {
-            bgee: Some(installed_or_rebuilt_log(
-                &state.step1.generate_directory,
-                &state.step3.bgee_items,
-            )),
-            bg2ee: Some(rebuilt_weidu_log_text(&state.step3.bg2ee_items)),
-        },
+        _ => {
+            let (bgee, iwdee) = first_slot_export_fields(
+                &state.step1.game_install,
+                Some(installed_or_rebuilt_log(
+                    &state.step1.generate_directory,
+                    &state.step3.bgee_items,
+                )),
+            );
+            ExportWeiduLogs {
+                bgee,
+                bg2ee: Some(rebuilt_weidu_log_text(&state.step3.bg2ee_items)),
+                iwdee,
+            }
+        }
     }
 }
 
@@ -1961,5 +2024,126 @@ mod tests {
             ShareExportSources::default().log_source,
             ExportLogSource::Rebuilt
         );
+    }
+
+    fn decode_payload_json(code: &str) -> serde_json::Value {
+        let encoded = code
+            .trim()
+            .strip_prefix(SHARE_CODE_PREFIX)
+            .expect("share code prefix");
+        let bytes = base64url_decode(encoded).expect("base64 decode");
+        let bytes = zlib_decompress(&bytes).expect("zlib decode");
+        serde_json::from_slice(&bytes).expect("json parse")
+    }
+
+    #[test]
+    fn iwdee_export_writes_the_iwdee_key() {
+        let mut state = state_with_one_bgee_component();
+        state.step1.game_install = "IWDEE".to_string();
+
+        let code = export_modlist_share_code(&state).expect("export");
+        let json = decode_payload_json(&code);
+        let logs = json.get("weidu_logs").expect("weidu_logs object");
+
+        assert!(
+            logs.get("iwdee")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.contains("EEFIXPACK")),
+            "iwdee key must carry the first-slot log text: {logs:?}"
+        );
+        assert!(
+            logs.get("bgee").is_none(),
+            "bgee key must be absent for an IWDEE export: {logs:?}"
+        );
+    }
+
+    #[test]
+    fn old_iwdee_code_with_bgee_key_still_imports() {
+        let json = r#"{
+            "format_version": 1,
+            "bio_version": "0.1.0-test",
+            "game_install": "IWDEE",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "bgee": "~MOD\\MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#;
+        let code = encode_share_payload_text(json).expect("encode");
+        let preview = preview_modlist_share_code(&code).expect("preview");
+
+        assert_eq!(preview.game_install, "IWDEE");
+        assert_eq!(preview.bgee_entries, 1);
+        assert!(preview.bgee_log_text.contains("A component"));
+    }
+
+    #[test]
+    fn new_iwdee_code_with_iwdee_key_imports() {
+        let json = r#"{
+            "format_version": 1,
+            "bio_version": "0.1.0-test",
+            "game_install": "IWDEE",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "iwdee": "~MOD\\MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#;
+        let code = encode_share_payload_text(json).expect("encode");
+        let preview = preview_modlist_share_code(&code).expect("preview");
+
+        assert_eq!(preview.game_install, "IWDEE");
+        assert_eq!(preview.bgee_entries, 1);
+        assert!(preview.bgee_log_text.contains("A component"));
+    }
+
+    #[test]
+    fn a_missing_side_stays_null_unless_the_list_is_iwdee() {
+        let mut untouched = json!({ "weidu_logs": { "bgee": "first", "bg2ee": null } });
+        move_first_slot_log_to_iwdee_key(&mut untouched, None);
+        assert_eq!(
+            untouched,
+            json!({ "weidu_logs": { "bgee": "first", "bg2ee": null } })
+        );
+
+        let mut moved = json!({ "weidu_logs": { "bgee": null, "bg2ee": null } });
+        move_first_slot_log_to_iwdee_key(&mut moved, Some("order"));
+        assert_eq!(
+            moved,
+            json!({ "weidu_logs": { "bg2ee": null, "iwdee": "order" } })
+        );
+    }
+
+    #[test]
+    fn bgee_bg2ee_eet_weidu_logs_json_is_unchanged() {
+        for game in ["BGEE", "BG2EE", "EET"] {
+            let mut state = state_with_one_bgee_component();
+            state.step1.game_install = game.to_string();
+            if game != "BGEE" {
+                state.step3.bg2ee_items.clone_from(&state.step3.bgee_items);
+            }
+
+            let code = export_modlist_share_code(&state).expect("export");
+            let json = decode_payload_json(&code);
+            let logs = json
+                .get("weidu_logs")
+                .and_then(serde_json::Value::as_object)
+                .expect("weidu_logs object");
+
+            let mut keys: Vec<&String> = logs.keys().collect();
+            keys.sort();
+            assert_eq!(
+                keys,
+                vec!["bg2ee", "bgee"],
+                "no iwdee key for {game}: {logs:?}"
+            );
+
+            let expected_first_slot = rebuilt_weidu_log_text(&state.step3.bgee_items);
+            let expected_second_slot = rebuilt_weidu_log_text(&state.step3.bg2ee_items);
+            assert_eq!(
+                logs["bgee"].as_str(),
+                Some(expected_first_slot.as_str()),
+                "bgee text for {game}"
+            );
+            assert_eq!(
+                logs["bg2ee"].as_str(),
+                Some(expected_second_slot.as_str()),
+                "bg2ee text for {game}"
+            );
+        }
     }
 }

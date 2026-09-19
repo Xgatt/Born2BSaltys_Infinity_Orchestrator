@@ -310,6 +310,23 @@ mod tests {
     }
 
     #[test]
+    fn iwdee_preview_from_an_iwdee_keyed_payload_yields_one_iwdee_section() {
+        let json = r#"{
+            "format_version": 1,
+            "game_install": "IWDEE",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "iwdee": "~MOD/MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#;
+        let code = crate::app::modlist_share::encode_share_payload_text(json).expect("encode");
+        let preview = crate::app::modlist_share::preview_modlist_share_code(&code)
+            .expect("preview must build");
+
+        let counts = InsideCounts::from_preview(&preview);
+        assert_eq!(counts.per_game, vec![("IWDEE".to_string(), 1)]);
+        assert_eq!(counts.components, 1);
+    }
+
+    #[test]
     fn plural_handles_entry_entries() {
         assert_eq!(plural(1, "entry"), "1 entry");
         assert_eq!(plural(2, "entry"), "2 entries");

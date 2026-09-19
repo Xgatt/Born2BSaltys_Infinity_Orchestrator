@@ -298,6 +298,26 @@ mod tests {
     }
 
     #[test]
+    fn iwdee_preview_from_an_iwdee_keyed_payload_yields_one_iwdee_section() {
+        let json = r#"{
+            "format_version": 1,
+            "game_install": "IWDEE",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "iwdee": "~MOD/MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#;
+        let code = crate::app::modlist_share::encode_share_payload_text(json).expect("encode");
+        let preview = crate::app::modlist_share::preview_modlist_share_code(&code)
+            .expect("preview must build");
+
+        let sections = section_texts(&preview);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].0, "IWDEE");
+        assert_eq!(sections[0].1, preview.bgee_log_text);
+        assert_eq!(preview.bgee_entries, 1);
+        assert!(sections[0].1.contains("A component"));
+    }
+
+    #[test]
     fn bg2ee_only_preview_reads_the_bg2ee_log() {
         let mut preview = sample_preview();
         preview.game_install = "BG2EE".to_string();

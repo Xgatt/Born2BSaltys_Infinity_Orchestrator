@@ -60,13 +60,17 @@ fn collect_stage_request(
     palette: ThemePalette,
     orchestrator: &mut OrchestratorApp,
 ) -> Option<CreateRequest> {
+    let step1 = &orchestrator.wizard_state.step1;
+    let destination_prep_running = orchestrator.create_destination_prep_rx.is_some();
+    let active_install_id = orchestrator.active_install_modlist_id.as_deref();
     match stage_choose::render(
         ui,
         palette,
         &mut orchestrator.create_screen_state,
-        orchestrator.create_destination_prep_rx.is_some(),
+        destination_prep_running,
         &orchestrator.registry,
-        orchestrator.active_install_modlist_id.as_deref(),
+        active_install_id,
+        step1,
     ) {
         ChooseOutcome::StartScratch => Some(CreateRequest::StartScratch),
         ChooseOutcome::OpenLoadDraft => Some(CreateRequest::OpenLoadDraft),

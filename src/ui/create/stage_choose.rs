@@ -3,11 +3,15 @@
 
 use eframe::egui;
 
+use crate::app::compat_dlc_source::{SourceNotice, SourceNoticeSeverity, SourceRemedy};
+use crate::app::game_authority;
+use crate::app::state::Step1State;
 use crate::registry::destination_claim::{
     ClaimContext, DestinationClaim, resolve_destination_claim,
 };
 use crate::registry::model::{Game, ModlistRegistry};
 use crate::ui::create::state_create::CreateScreenState;
+use crate::ui::install::stage_review::{self, SourceWarningAction};
 use crate::ui::install::sub_flow_footer::{self, PrimaryBtn};
 use crate::ui::install::{destination_not_empty, destination_owned};
 use crate::ui::orchestrator::widgets::{
@@ -42,6 +46,12 @@ const FORM_INPUT_MARGIN: egui::Margin = egui::Margin {
 
 const FORM_ROW_GAP_PX: f32 = 8.0;
 
+struct ChooseCtx<'a> {
+    registry: &'a ModlistRegistry,
+    active_install_id: Option<&'a str>,
+    step1: &'a Step1State,
+}
+
 pub fn render(
     ui: &mut egui::Ui,
     palette: ThemePalette,
@@ -49,24 +59,22 @@ pub fn render(
     destination_prep_running: bool,
     registry: &ModlistRegistry,
     active_install_id: Option<&str>,
+    step1: &Step1State,
 ) -> ChooseOutcome {
     let mut outcome = ChooseOutcome::Stay;
     let mut claim = DestinationClaim::Free;
+    let ctx = ChooseCtx {
+        registry,
+        active_install_id,
+        step1,
+    };
 
     let body_h = (ui.available_height() - sub_flow_footer::FOOTER_HEIGHT_PX).max(0.0);
     ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                render_body(
-                    ui,
-                    palette,
-                    state,
-                    &mut outcome,
-                    registry,
-                    active_install_id,
-                    &mut claim,
-                );
+                render_body(ui, palette, state, &mut outcome, &ctx, &mut claim);
             });
     });
 
@@ -100,12 +108,11 @@ fn render_body(
     palette: ThemePalette,
     state: &mut CreateScreenState,
     outcome: &mut ChooseOutcome,
-    registry: &ModlistRegistry,
-    active_install_id: Option<&str>,
+    ctx: &ChooseCtx<'_>,
     claim: &mut DestinationClaim,
 ) {
     render_title_row(ui, palette, outcome);
-    render_setup_box(ui, palette, state, registry, active_install_id, claim);
+    render_setup_box(ui, palette, state, ctx, claim);
 }
 
 fn render_title_row(ui: &mut egui::Ui, palette: ThemePalette, outcome: &mut ChooseOutcome) {
@@ -146,8 +153,7 @@ fn render_setup_box(
     ui: &mut egui::Ui,
     palette: ThemePalette,
     state: &mut CreateScreenState,
-    registry: &ModlistRegistry,
-    active_install_id: Option<&str>,
+    ctx: &ChooseCtx<'_>,
     claim: &mut DestinationClaim,
 ) {
     redesign_box(ui, palette, None, |ui| {
@@ -211,12 +217,14 @@ fn render_setup_box(
             })
             .inner;
 
+        render_missing_source_notice(ui, palette, ctx.step1, state.game.to_legacy_string());
+
         *claim = resolve_destination_claim(
-            registry,
+            ctx.registry,
             &ClaimContext {
                 destination: &state.destination,
                 held_id: None,
-                installing_id: active_install_id,
+                installing_id: ctx.active_install_id,
             },
         );
         let hard_block = claim.blocks();
@@ -235,7 +243,7 @@ fn render_setup_box(
         }
 
         if !matches!(*claim, DestinationClaim::Free) {
-            destination_owned::render(ui, palette, claim, registry);
+            destination_owned::render(ui, palette, claim, ctx.registry);
         }
 
         if !hard_block
@@ -246,6 +254,29 @@ fn render_setup_box(
             state.destination_choice = Some(picked);
         }
     });
+}
+
+fn render_missing_source_notice(
+    ui: &mut egui::Ui,
+    palette: ThemePalette,
+    step1: &Step1State,
+    game_install: &str,
+) {
+    let Some(msg) = game_authority::missing_source_message(
+        &game_authority::missing_source_folders(step1, game_install),
+    ) else {
+        return;
+    };
+    stage_review::render_source_notice(
+        ui,
+        palette,
+        &SourceNotice {
+            severity: SourceNoticeSeverity::Warning,
+            text: msg,
+            remedy: SourceRemedy::SetSourceFolder,
+        },
+        SourceWarningAction::ChooseModify,
+    );
 }
 
 fn field_label(ui: &mut egui::Ui, palette: ThemePalette, text: &str) {

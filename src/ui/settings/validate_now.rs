@@ -77,7 +77,7 @@ pub fn run_now(step1: &Step1State) -> ValidationReport {
         check_path(FIELD_MOD_INSTALLER_BINARY, &step1.mod_installer_binary),
     );
 
-    report.overall_ok = state_validation::is_step1_valid(step1);
+    report.overall_ok = state_validation::settings_paths_ok(step1);
     report.issue_count = report
         .fields
         .values()

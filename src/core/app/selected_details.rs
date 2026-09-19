@@ -10,6 +10,7 @@ use crate::app::component_details::{
     compat_code_from_kind, compat_role, display_name_from_tp2, tp2_file_name,
 };
 use crate::app::controller::log_apply_match::parse_component_tp2_from_raw;
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::state::{Step2Selection, WizardState};
 use crate::parser::weidu_component_line::parse_lang;
 use crate::parser::weidu_version::parse_version;
@@ -61,7 +62,7 @@ pub(crate) fn selected_details_data(state: &WizardState) -> SelectedDetailsData 
     };
     let mods = match selection {
         Step2Selection::Mod { game_tab, .. } | Step2Selection::Component { game_tab, .. } => {
-            if game_tab == "BGEE" {
+            if game_authority::slot_for_tab(game_tab) == GameSlot::First {
                 &state.step2.bgee_mods
             } else {
                 &state.step2.bg2ee_mods

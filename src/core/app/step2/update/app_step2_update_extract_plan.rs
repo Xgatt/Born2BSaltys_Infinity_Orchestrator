@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::app::app_step2_update_download;
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::mod_downloads;
 use crate::app::state::{Step2UpdateAsset, WizardState};
 
@@ -125,7 +126,7 @@ fn extract_source_ref(
 }
 
 fn current_mod_root(state: &WizardState, game_tab: &str, tp_file: &str) -> Option<PathBuf> {
-    let mods = if game_tab == "BGEE" {
+    let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &state.step2.bgee_mods
     } else {
         &state.step2.bg2ee_mods

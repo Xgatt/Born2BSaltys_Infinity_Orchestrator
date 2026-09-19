@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
 
 use crate::app::controller::util::open_in_shell;
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::mod_downloads;
 use crate::app::state::{Step2Selection, WizardState};
 use crate::app::step2_action::Step2Action;
@@ -414,7 +415,7 @@ fn set_selected_mod_update_locked(state: &mut WizardState, locked: bool) {
     let mod_name: String;
     let update_entry: Option<String>;
     {
-        let selected_mods = if game_tab == "BGEE" {
+        let selected_mods = if game_authority::slot_for_tab(&game_tab) == GameSlot::First {
             &mut state.step2.bgee_mods
         } else {
             &mut state.step2.bg2ee_mods
@@ -473,9 +474,10 @@ fn set_mod_update_locked(state: &mut WizardState, tp2: &str, locked: bool) {
         .chain(state.step2.bg2ee_mods.iter())
         .find(|m| mod_downloads::normalize_mod_download_tp2(&m.tp_file) == tp2_key)
         .and_then(mod_update_entry_text);
+    let first_tab = game_authority::first_slot_tab(&state.step1.game_install);
     sync_cached_popup_update_lock(
         state,
-        "BGEE",
+        first_tab,
         &canonical_tp_file,
         update_entry.as_deref(),
         locked,
@@ -619,8 +621,9 @@ fn update_target_for_tp2(state: &WizardState, tp2: &str) -> Option<(String, Stri
     if target.is_empty() {
         return None;
     }
+    let first_tab = game_authority::first_slot_tab(&state.step1.game_install);
     for (game_tab, mods) in [
-        ("BGEE", state.step2.bgee_mods.as_slice()),
+        (first_tab, state.step2.bgee_mods.as_slice()),
         ("BG2EE", state.step2.bg2ee_mods.as_slice()),
     ] {
         for mod_state in mods {

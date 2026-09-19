@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::app::game_authority::{self, GameSlot};
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::orchestrator::widgets::{BtnOpts, KebabItem, redesign_btn, render_kebab};
 use crate::ui::shared::redesign_tokens::{
@@ -25,10 +26,9 @@ const ITEM_GAP: f32 = 8.0;
 const ACTION_LEFT_PAD: f32 = 12.0;
 
 fn active_mods(state: &crate::app::state::WizardState) -> &[crate::app::state::Step2ModState] {
-    if state.step2.active_game_tab == "BGEE" {
-        &state.step2.bgee_mods
-    } else {
-        &state.step2.bg2ee_mods
+    match game_authority::slot_for_tab(&state.step2.active_game_tab) {
+        GameSlot::First => &state.step2.bgee_mods,
+        GameSlot::Second => &state.step2.bg2ee_mods,
     }
 }
 
@@ -121,8 +121,7 @@ impl Step2TabRowState {
 
         Self {
             tabs: GameTabVisibility {
-                show_first_game: matches!(game, "BGEE" | "EET"),
-                show_second_game: matches!(game, "BG2EE" | "EET"),
+                tabs: game_authority::tabs_for_install(game),
             },
             scans: ScanStatus {
                 bgee_scanned,
@@ -135,9 +134,9 @@ impl Step2TabRowState {
                 can_bootstrap_from_log,
             },
             active_tab: ActiveTabState {
-                name: active_tab.clone(),
-                is_bgee: active_tab == "BGEE",
-                is_bg2: active_tab == "BG2EE",
+                is_first_slot: game_authority::slot_for_tab(&active_tab) == GameSlot::First,
+                is_second_slot: game_authority::slot_for_tab(&active_tab) == GameSlot::Second,
+                name: active_tab,
             },
             issue_target: first_active_tab_issue_target(
                 active_mods(&orchestrator.wizard_state),
@@ -156,8 +155,7 @@ impl Step2TabRowState {
 }
 
 struct GameTabVisibility {
-    show_first_game: bool,
-    show_second_game: bool,
+    tabs: &'static [&'static str],
 }
 
 struct ScanStatus {
@@ -174,8 +172,8 @@ struct ModeFlags {
 
 struct ActiveTabState {
     name: String,
-    is_bgee: bool,
-    is_bg2: bool,
+    is_first_slot: bool,
+    is_second_slot: bool,
 }
 
 struct UpdatesState {
@@ -271,7 +269,9 @@ const fn updates_state(input: &UpdatesInput) -> UpdatesState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScanActivity, UpdateMode, UpdateScan, UpdatesInput, updates_state};
+    use super::{
+        ScanActivity, UpdateMode, UpdateScan, UpdatesInput, log_button_label, updates_state,
+    };
 
     fn review_edit_input(reviewed: bool, has_pending_log_downloads: bool) -> UpdatesInput {
         UpdatesInput {
@@ -335,6 +335,12 @@ mod tests {
         assert_eq!(state.label, "Versions...");
         assert!(state.enabled);
     }
+
+    #[test]
+    fn log_button_label_names_the_active_tab() {
+        assert_eq!(log_button_label("IWDEE"), "Select IWDEE via WeiDU Log");
+        assert_eq!(log_button_label("BGEE"), "Select BGEE via WeiDU Log");
+    }
 }
 
 fn issue_target_filter(
@@ -360,25 +366,20 @@ fn render_game_tabs(
     row: &Step2TabRowState,
 ) -> Option<egui::Rect> {
     ui.spacing_mut().item_spacing.x = TAB_GAP;
-    let first = row.tabs.show_first_game.then(|| {
-        game_tab(
+    let mut active_rect = None;
+    for tab in row.tabs.tabs {
+        if let Some(rect) = game_tab(
             ui,
             palette,
-            "BGEE",
+            tab,
             &mut orchestrator.wizard_state.step2.active_game_tab,
-        )
-    });
-    let second = row.tabs.show_second_game.then(|| {
-        game_tab(
-            ui,
-            palette,
-            "BG2EE",
-            &mut orchestrator.wizard_state.step2.active_game_tab,
-        )
-    });
+        ) {
+            active_rect = Some(rect);
+        }
+    }
     ui.add_space(ACTION_LEFT_PAD - TAB_GAP);
     ui.spacing_mut().item_spacing.x = ITEM_GAP;
-    first.flatten().or_else(|| second.flatten())
+    active_rect
 }
 
 fn render_log_buttons(
@@ -390,16 +391,16 @@ fn render_log_buttons(
     if row.is_fork || row.modes.exact_log {
         return;
     }
-    if row.active_tab.is_bgee {
+    if row.active_tab.is_first_slot {
         render_log_button(
             ui,
             orchestrator,
             palette,
-            "Select BGEE via WeiDU Log",
+            &log_button_label(&row.active_tab.name),
             true,
             row,
         );
-    } else if row.active_tab.is_bg2 {
+    } else if row.active_tab.is_second_slot {
         render_log_button(
             ui,
             orchestrator,
@@ -409,6 +410,11 @@ fn render_log_buttons(
             row,
         );
     }
+}
+
+#[must_use]
+fn log_button_label(tab: &str) -> String {
+    format!("Select {tab} via WeiDU Log")
 }
 
 fn render_log_button(
@@ -425,7 +431,11 @@ fn render_log_button(
         row.scans.bg2_scanned
     } || row.modes.can_bootstrap_from_log;
     let tooltip = if bgee {
-        crate::ui::shared::tooltip_global::STEP2_SELECT_BGEE_LOG
+        if row.active_tab.name == game_authority::TAB_IWDEE {
+            crate::ui::shared::tooltip_global::STEP2_SELECT_IWDEE_LOG
+        } else {
+            crate::ui::shared::tooltip_global::STEP2_SELECT_BGEE_LOG
+        }
     } else {
         crate::ui::shared::tooltip_global::STEP2_SELECT_BG2EE_LOG
     };

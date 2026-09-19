@@ -5,6 +5,7 @@ use std::sync::mpsc::Receiver;
 
 use tracing::warn;
 
+use crate::app::game_authority;
 use crate::app::modlist_share::import_modlist_share_code;
 use crate::app::state::WizardState;
 use crate::install_runtime::flag_policies::InstallWorkflow;
@@ -60,10 +61,10 @@ fn arm_explicit_reproduce(state: &mut WizardState) {
     state.modlist_auto_build_waiting_for_install = false;
     state.reproduce_exact = true;
     state.current_step = 1;
-    state.step2.active_game_tab = if state.step1.game_install == "BGEE" {
-        "BGEE".to_string()
+    state.step2.active_game_tab = if state.step1.game_install == "EET" {
+        game_authority::TAB_BG2EE.to_string()
     } else {
-        "BG2EE".to_string()
+        game_authority::tabs_for_install(&state.step1.game_install)[0].to_string()
     };
 
     state.step2.scan_status = "Auto Build: preparing imported modlist".to_string();
@@ -226,6 +227,19 @@ mod tests {
         b.step1.game_install = "BGEE".to_string();
         arm_explicit_reproduce(&mut b);
         assert_eq!(b.step2.active_game_tab, "BGEE");
+    }
+
+    #[test]
+    fn auto_build_arms_iwdee_on_its_own_tab() {
+        let mut st = WizardState::default();
+        st.step1.game_install = "IWDEE".to_string();
+        arm_explicit_reproduce(&mut st);
+        assert_eq!(st.step2.active_game_tab, "IWDEE");
+
+        let mut b2 = WizardState::default();
+        b2.step1.game_install = "BG2EE".to_string();
+        arm_explicit_reproduce(&mut b2);
+        assert_eq!(b2.step2.active_game_tab, "BG2EE");
     }
 
     #[test]

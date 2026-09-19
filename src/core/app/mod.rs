@@ -91,6 +91,7 @@ pub mod compat_step3_rules;
 pub mod component_block_preview;
 pub mod component_details;
 pub mod controller;
+pub mod game_authority;
 pub mod mod_downloads;
 #[path = "step2/update/mod_update_locks.rs"]
 pub mod mod_update_locks;

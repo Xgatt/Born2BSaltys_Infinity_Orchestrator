@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::app::game_authority::{self, GameSlot};
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::shared::redesign_tokens::redesign_text_faint;
 use crate::ui::shared::tab_open_seam::paint_active_tab_seam_cover;
@@ -41,11 +42,12 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) {
             && toolbar_support_step3::tab_has_conflict(&toolbar_summary.bgee_markers);
         state.step3.bg2ee_has_conflict = toolbar_summary.show_bg2ee
             && toolbar_support_step3::tab_has_conflict(&toolbar_summary.bg2ee_markers);
-        let active_markers = if state.step3.active_game_tab == "BGEE" {
-            toolbar_summary.bgee_markers.clone()
-        } else {
-            toolbar_summary.bg2ee_markers.clone()
-        };
+        let active_markers =
+            if game_authority::slot_for_tab(&state.step3.active_game_tab) == GameSlot::First {
+                toolbar_summary.bgee_markers.clone()
+            } else {
+                toolbar_summary.bg2ee_markers.clone()
+            };
         (toolbar_summary, active_markers)
     };
 

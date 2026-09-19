@@ -6,6 +6,7 @@ use crate::app::app_step2_update_policy::{
     mark_update_available, mod_has_current_version, source_ref_is_update, source_ref_matches,
     version_is_update,
 };
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::mod_downloads;
 use crate::app::state::{
     ManualDownloadReason, ManualDownloadRequest, Step2UpdateAsset, Step2UpdateRetryRequest,
@@ -480,7 +481,7 @@ pub(crate) fn clear_update_check_result_for_mod(
 }
 
 fn store_latest_checked_version(state: &mut WizardState, game_tab: &str, tp_file: &str, tag: &str) {
-    let mods = if game_tab == "BGEE" {
+    let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &mut state.step2.bgee_mods
     } else {
         &mut state.step2.bg2ee_mods

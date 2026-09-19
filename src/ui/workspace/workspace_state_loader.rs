@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Born2BSalty
 
 use crate::app::controller::step3_sync;
+use crate::app::game_authority;
 use crate::app::state::{
     Step1State, Step2ComponentState, Step2ModState, Step3ItemState, WizardState,
 };
@@ -18,6 +19,16 @@ pub fn populate_wizard_state_from_workspace(
     wizard_state: &mut WizardState,
 ) {
     wizard_state.step1.game_install = entry.game.to_legacy_string().to_string();
+    wizard_state.step2.active_game_tab = game_authority::normalized_tab(
+        &wizard_state.step1.game_install,
+        &wizard_state.step2.active_game_tab,
+    )
+    .to_string();
+    wizard_state.step3.active_game_tab = game_authority::normalized_tab(
+        &wizard_state.step1.game_install,
+        &wizard_state.step3.active_game_tab,
+    )
+    .to_string();
 
     sync_paths_from_settings(settings_store, wizard_state);
     apply_mods_source(workspace, settings_store, wizard_state);
@@ -50,7 +61,12 @@ pub fn populate_wizard_state_from_workspace(
     wizard_state.step3.bgee_items = step3_sync::build_step3_items(&wizard_state.step2.bgee_mods);
     wizard_state.step3.bg2ee_items = step3_sync::build_step3_items(&wizard_state.step2.bg2ee_mods);
 
-    wizard_state.step3.bgee_collapsed_blocks = collapsed_blocks_for_tab(workspace, "BGEE");
+    let first_tab_key = game_authority::first_slot_tab(&wizard_state.step1.game_install);
+    let mut first_collapsed = collapsed_blocks_for_tab(workspace, first_tab_key);
+    if first_collapsed.is_empty() && first_tab_key != "BGEE" {
+        first_collapsed = collapsed_blocks_for_tab(workspace, "BGEE");
+    }
+    wizard_state.step3.bgee_collapsed_blocks = first_collapsed;
     wizard_state.step3.bg2ee_collapsed_blocks = collapsed_blocks_for_tab(workspace, "BG2EE");
 
     wizard_state.step3.bgee_undo_stack.clear();
@@ -205,9 +221,13 @@ pub fn extract_workspace_state_from_wizard(
     };
 
     let mut step3_group_collapse = prior.step3_group_collapse.clone();
+    let first_tab_key = game_authority::first_slot_tab(&wizard_state.step1.game_install);
+    if first_tab_key != game_authority::TAB_BGEE {
+        write_collapsed_blocks(&mut step3_group_collapse, game_authority::TAB_BGEE, &[]);
+    }
     write_collapsed_blocks(
         &mut step3_group_collapse,
-        "BGEE",
+        first_tab_key,
         &wizard_state.step3.bgee_collapsed_blocks,
     );
     write_collapsed_blocks(
@@ -986,6 +1006,89 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn iwdee_collapsed_groups_fall_back_to_the_bgee_key() {
+        let mut step3_group_collapse = std::collections::HashMap::new();
+        step3_group_collapse.insert("BGEE::BLOCK_A".to_string(), true);
+        let workspace = ModlistWorkspaceState {
+            step3_group_collapse,
+            ..Default::default()
+        };
+
+        let mut ws = WizardState::default();
+        populate_wizard_state_from_workspace(
+            &workspace,
+            &entry(Game::IWDEE),
+            &SettingsStore::new_default(),
+            &mut ws,
+        );
+        assert!(
+            ws.step3
+                .bgee_collapsed_blocks
+                .contains(&"BLOCK_A".to_string()),
+            "an IWDEE list with no IWDEE key falls back to the BGEE key"
+        );
+
+        let mut step3_group_collapse = std::collections::HashMap::new();
+        step3_group_collapse.insert("IWDEE::BLOCK_B".to_string(), true);
+        step3_group_collapse.insert("BGEE::BLOCK_A".to_string(), true);
+        let workspace = ModlistWorkspaceState {
+            step3_group_collapse,
+            ..Default::default()
+        };
+        let mut ws2 = WizardState::default();
+        populate_wizard_state_from_workspace(
+            &workspace,
+            &entry(Game::IWDEE),
+            &SettingsStore::new_default(),
+            &mut ws2,
+        );
+        assert_eq!(ws2.step3.bgee_collapsed_blocks, vec!["BLOCK_B".to_string()]);
+    }
+
+    #[test]
+    fn saving_an_iwdee_list_retires_its_old_bgee_collapse_keys() {
+        let mut step3_group_collapse = std::collections::HashMap::new();
+        step3_group_collapse.insert("BGEE::BLOCK_A".to_string(), true);
+        step3_group_collapse.insert("BG2EE::BLOCK_Z".to_string(), true);
+        let prior = ModlistWorkspaceState {
+            step3_group_collapse,
+            ..Default::default()
+        };
+
+        let mut expanded = WizardState::default();
+        expanded.step1.game_install = "IWDEE".to_string();
+        let saved = extract_workspace_state_from_wizard(&expanded, &prior);
+        assert!(
+            !saved
+                .step3_group_collapse
+                .keys()
+                .any(|key| key.starts_with("BGEE::")),
+            "an expanded group must not come back collapsed through the old key"
+        );
+
+        let mut bgee_list = WizardState::default();
+        bgee_list.step1.game_install = "BGEE".to_string();
+        bgee_list.step3.bgee_collapsed_blocks = vec!["BLOCK_A".to_string()];
+        let kept = extract_workspace_state_from_wizard(&bgee_list, &prior);
+        assert!(kept.step3_group_collapse.contains_key("BGEE::BLOCK_A"));
+    }
+
+    #[test]
+    fn opening_an_iwdee_list_starts_on_the_iwdee_tab() {
+        let mut ws = WizardState::default();
+        ws.step2.active_game_tab = "BGEE".to_string();
+        ws.step3.active_game_tab = "BG2EE".to_string();
+        populate_wizard_state_from_workspace(
+            &ModlistWorkspaceState::default(),
+            &entry(Game::IWDEE),
+            &SettingsStore::new_default(),
+            &mut ws,
+        );
+        assert_eq!(ws.step2.active_game_tab, "IWDEE");
+        assert_eq!(ws.step3.active_game_tab, "IWDEE");
     }
 
     #[test]

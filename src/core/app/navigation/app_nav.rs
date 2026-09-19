@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::state::{Step2ModState, Step3ItemState, WizardState, exact_log_ready_to_install};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,28 +71,24 @@ fn step2_has_selection(state: &WizardState) -> bool {
     let selected_in = |mods: &[Step2ModState]| -> bool {
         mods.iter().any(|m| m.components.iter().any(|c| c.checked))
     };
-    match state.step1.game_install.as_str() {
-        "BG2EE" => selected_in(&state.step2.bg2ee_mods),
-        "EET" => selected_in(&state.step2.bgee_mods) || selected_in(&state.step2.bg2ee_mods),
-        _ => selected_in(&state.step2.bgee_mods),
-    }
+    let game = state.step1.game_install.as_str();
+    (game_authority::has_slot(game, GameSlot::First) && selected_in(&state.step2.bgee_mods))
+        || (game_authority::has_slot(game, GameSlot::Second)
+            && selected_in(&state.step2.bg2ee_mods))
 }
 
 fn step3_has_items(state: &WizardState) -> bool {
     let real_items_in = |items: &[Step3ItemState]| -> bool { items.iter().any(|i| !i.is_parent) };
-    match state.step1.game_install.as_str() {
-        "BG2EE" => real_items_in(&state.step3.bg2ee_items),
-        "EET" => real_items_in(&state.step3.bgee_items) || real_items_in(&state.step3.bg2ee_items),
-        _ => real_items_in(&state.step3.bgee_items),
-    }
+    let game = state.step1.game_install.as_str();
+    (game_authority::has_slot(game, GameSlot::First) && real_items_in(&state.step3.bgee_items))
+        || (game_authority::has_slot(game, GameSlot::Second)
+            && real_items_in(&state.step3.bg2ee_items))
 }
 
 fn step3_conflicts_resolved(state: &WizardState) -> bool {
-    match state.step1.game_install.as_str() {
-        "BG2EE" => !state.step3.bg2ee_has_conflict,
-        "EET" => !state.step3.bgee_has_conflict && !state.step3.bg2ee_has_conflict,
-        _ => !state.step3.bgee_has_conflict,
-    }
+    let game = state.step1.game_install.as_str();
+    (!game_authority::has_slot(game, GameSlot::First) || !state.step3.bgee_has_conflict)
+        && (!game_authority::has_slot(game, GameSlot::Second) || !state.step3.bg2ee_has_conflict)
 }
 
 fn step3_has_no_real_items(state: &WizardState) -> bool {

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::mpsc::Receiver;
 
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::mod_downloads::{self, ModDownloadSource, ModDownloadsLoad};
 use crate::app::state::{
     ManualDownloadReason, ManualDownloadRequest, Step2Selection, WizardState,
@@ -162,7 +163,7 @@ fn collect_game_tab_update_preview(
     game_tab: &str,
     preview: &mut FullUpdatePreviewCollection,
 ) {
-    let mods = if game_tab == "BGEE" {
+    let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &mut state.step2.bgee_mods
     } else {
         &mut state.step2.bg2ee_mods
@@ -396,7 +397,7 @@ fn collect_target_update_preview(
         unknown: Vec::new(),
         update_requests: Vec::new(),
     };
-    let mods = if game_tab == "BGEE" {
+    let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &mut state.step2.bgee_mods
     } else {
         &mut state.step2.bg2ee_mods
@@ -977,6 +978,36 @@ mod tests {
             Some("modA/modA.tp2".to_string())
         );
         assert!(rx.is_none());
+    }
+
+    #[test]
+    fn update_preview_tabs_follow_the_lists_game() {
+        use crate::app::state::Step2ModState;
+
+        let mut state = WizardState::default();
+        state.step1.game_install = "IWDEE".to_string();
+        state.step2.active_game_tab = "IWDEE".to_string();
+        state.step2.bgee_mods = vec![Step2ModState {
+            name: "Mod".to_string(),
+            tp_file: "mod/mod.tp2".to_string(),
+            tp2_path: String::new(),
+            readme_path: None,
+            ini_path: None,
+            web_url: None,
+            package_marker: None,
+            latest_checked_version: None,
+            update_locked: false,
+            mod_prompt_summary: None,
+            mod_prompt_events: Vec::new(),
+            checked: true,
+            hidden_components: Vec::new(),
+            components: Vec::new(),
+        }];
+        let sources = ModDownloadsLoad::default();
+        let preview = collect_full_update_preview(&mut state, &sources, &BTreeMap::new(), false);
+        assert_eq!(preview.unknown, vec!["Mod".to_string()]);
+        assert!(preview.known.is_empty());
+        assert!(preview.manual.is_empty());
     }
 
     #[test]

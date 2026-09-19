@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 
 use eframe::egui;
 
+use crate::app::game_authority::{self, GameSlot};
 use crate::app::state::WizardState;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::workspace::state_workspace::WorkspaceStep;
@@ -44,7 +45,7 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) {
 }
 
 fn step3_fingerprint(state: &WizardState) -> u64 {
-    let is_bg2ee = state.step3.active_game_tab == "BG2EE";
+    let is_bg2ee = game_authority::slot_for_tab(&state.step3.active_game_tab) == GameSlot::Second;
     let (items, collapsed) = if is_bg2ee {
         (
             &state.step3.bg2ee_items,

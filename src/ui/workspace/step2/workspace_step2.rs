@@ -387,7 +387,10 @@ fn render_weidu_log_confirm(
         .step2
         .pending_weidu_log_confirm?;
 
-    let (title, body) = step2_log_confirm::weidu_log_dialog_text(bgee);
+    let (title, body) = step2_log_confirm::weidu_log_dialog_text(
+        bgee,
+        &orchestrator.wizard_state.step1.game_install,
+    );
     let dialog = step2_log_confirm::weidu_log_confirm(&title, &body);
     let outcome = confirm_dialog::render(ctx, orchestrator.theme_palette, &dialog);
 
