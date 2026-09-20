@@ -27,6 +27,7 @@ pub struct ManualDownloadRequest {
     pub page_url: String,
     pub reason: ManualDownloadReason,
     pub aliases: Vec<String>,
+    pub display_name: String,
 }
 
 pub fn push_manual_download_request(

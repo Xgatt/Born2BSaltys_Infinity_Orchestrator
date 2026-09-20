@@ -567,6 +567,7 @@ fn push_update_check_failure(
                 page_url: source_url.to_string(),
                 reason: ManualDownloadReason::SourceCheckFailed(error.to_string()),
                 aliases,
+                display_name: String::new(),
             },
         );
     }

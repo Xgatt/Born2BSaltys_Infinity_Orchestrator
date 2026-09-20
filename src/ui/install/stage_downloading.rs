@@ -541,6 +541,10 @@ pub fn render_live(
         .install_screen_state
         .manual_downloads
         .continue_without
+        && !orchestrator
+            .install_screen_state
+            .manual_downloads
+            .extract_deferred
         && super::stage_fork_download::fork_extract_complete(orchestrator)
     {
         return DownloadingOutcome::OpenWorkspace;
@@ -861,6 +865,14 @@ fn manual_row_url_host(url: &str) -> Option<String> {
     }
     let after_scheme = trimmed.split_once("://").map_or(trimmed, |(_, rest)| rest);
     let host = after_scheme.split(['/', '?']).next()?;
+    let host = if host
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("www."))
+    {
+        &host[4..]
+    } else {
+        host
+    };
     if host.is_empty() {
         None
     } else {
@@ -876,8 +888,14 @@ fn manual_row_from_request(request: &ManualDownloadRequest) -> ManualDownloadRow
                 .unwrap_or_else(|| "source check failed".to_string())
         }
     };
+    let display_name = request.display_name.trim();
+    let label = if display_name.is_empty() {
+        request.label.clone()
+    } else {
+        display_name.to_string()
+    };
     ManualDownloadRow {
-        label: request.label.clone(),
+        label,
         from,
         page_url: request.page_url.clone(),
         status: ManualRowStatus::Waiting,
@@ -983,8 +1001,19 @@ fn enter_manual_hold_once_with_poll(
         return None;
     }
     let wanted_sizes: HashSet<u64> = expected.iter().map(|meta| meta.size).collect();
-    let (rx, alive) =
-        manual_download_watcher::start_watch(PathBuf::from(&archive_dir), wanted_sizes, poll);
+    let ignored_names: HashSet<String> = orchestrator
+        .wizard_state
+        .step2
+        .update_selected_update_assets
+        .iter()
+        .map(|asset| crate::app::app_step2_update_download::archive_file_name(asset).to_lowercase())
+        .collect();
+    let (rx, alive) = manual_download_watcher::start_watch(
+        PathBuf::from(&archive_dir),
+        wanted_sizes,
+        ignored_names,
+        poll,
+    );
     orchestrator.manual_download_rx = Some(rx);
     Some(alive)
 }
@@ -1107,6 +1136,7 @@ fn apply_manual_match(
     }
     let tp2_prefix = crate::app::app_step2_update_download::tp2_archive_name(&request.tp_file);
     let (source_id, tag) = decompose_manual_store_name(&store_name, &tp2_prefix);
+    let dest = archive_dir.join(&store_name);
     orchestrator
         .wizard_state
         .step2
@@ -1121,6 +1151,14 @@ fn apply_manual_match(
             asset_url: String::new(),
             installed_source_ref: None,
         });
+    push_downloaded_entry_once(
+        &mut orchestrator
+            .wizard_state
+            .step2
+            .update_selected_downloaded_sources,
+        &request.label,
+        &dest,
+    );
     remove_manual_request_label(&mut orchestrator.wizard_state.step2, &request);
     true
 }
@@ -1351,8 +1389,16 @@ fn confirm_continue_without(orchestrator: &mut OrchestratorApp) {
         .manual_downloads
         .rows
         .iter()
-        .filter(|row| row.status != ManualRowStatus::Found)
-        .map(|row| row.label.clone())
+        .enumerate()
+        .filter(|(_, row)| row.status != ManualRowStatus::Found)
+        .map(|(index, row)| {
+            orchestrator
+                .wizard_state
+                .step2
+                .update_selected_manual_downloads
+                .get(index)
+                .map_or_else(|| row.label.clone(), |request| request.label.clone())
+        })
         .collect();
     orchestrator
         .install_screen_state
@@ -1495,7 +1541,12 @@ fn install_empty_asset_clean_finish(
                 || step2.pending_saved_log_update_preview
                 || step2.update_selected_download_running
                 || step2.update_selected_extract_running;
-            if post_extract_scan_running {
+            if post_extract_scan_running
+                || orchestrator
+                    .install_screen_state
+                    .manual_downloads
+                    .extract_deferred
+            {
                 return None;
             }
             tracing::info!(
@@ -1620,13 +1671,7 @@ pub(crate) fn stage_and_kick_archive_skip_once(
     orchestrator: &mut OrchestratorApp,
     inputs: &LivePipelineInputs,
 ) {
-    if cache_check_ready(orchestrator, inputs)
-        && !manual_hold_pending(orchestrator)
-        && !orchestrator
-            .install_screen_state
-            .manual_downloads
-            .manual_hold_active()
-    {
+    if cache_check_ready(orchestrator, inputs) && !manual_hold_pending(orchestrator) {
         orchestrator
             .install_screen_state
             .pipeline_flags
@@ -1743,6 +1788,20 @@ pub(crate) fn kick_streaming_downloader_once(orchestrator: &mut OrchestratorApp)
     }
 }
 
+fn downloaded_entry_already_recorded(sources: &[String], label: &str) -> bool {
+    sources.iter().any(|entry| {
+        entry
+            .split_once(" -> ")
+            .is_some_and(|(l, _)| l.trim() == label)
+    })
+}
+
+fn push_downloaded_entry_once(sources: &mut Vec<String>, label: &str, dest: &Path) {
+    if !downloaded_entry_already_recorded(sources, label) {
+        sources.push(format!("{label} -> {}", dest.display()));
+    }
+}
+
 fn mark_empty_url_assets_as_cache_hits(
     orchestrator: &mut OrchestratorApp,
     skip_indices: &mut HashSet<usize>,
@@ -1755,15 +1814,19 @@ fn mark_empty_url_assets_as_cache_hits(
         .iter()
         .enumerate()
     {
-        if asset.asset_url.trim().is_empty() && skip_indices.insert(index) {
+        if asset.asset_url.trim().is_empty() {
+            skip_indices.insert(index);
             let dest = archive_dir.join(crate::app::app_step2_update_download::archive_file_name(
                 asset,
             ));
-            orchestrator
-                .wizard_state
-                .step2
-                .update_selected_downloaded_sources
-                .push(format!("{} -> {}", asset.label, dest.display()));
+            push_downloaded_entry_once(
+                &mut orchestrator
+                    .wizard_state
+                    .step2
+                    .update_selected_downloaded_sources,
+                &asset.label,
+                &dest,
+            );
         }
     }
 }
@@ -1843,7 +1906,11 @@ pub(crate) fn ingest_downloaded_archives_once(
         && !destination_empty
         && !download_running
         && flags.download_phase_started()
-        && downloaded_sources > 0;
+        && downloaded_sources > 0
+        && !orchestrator
+            .install_screen_state
+            .manual_downloads
+            .manual_hold_active();
     if flags.download_phase_started() && !flags.archives_ingested() && !download_running {
         tracing::info!(
             target = "orchestrator",
@@ -1951,6 +2018,10 @@ pub(crate) fn render_chrome(
     let mut panel_action = PanelAction::None;
     let mut hold_active = false;
     let mut left_action_label = String::new();
+    let waiting: Option<String> = manual.as_deref().and_then(|state| {
+        (state.manual_hold_active() && (state.extract_deferred || progress.rows.is_empty()))
+            .then(|| state.waiting_label())
+    });
 
     let body_h = downloading_middle_height(ui.available_height());
     ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
@@ -1962,7 +2033,7 @@ pub(crate) fn render_chrome(
                     ui.add_space(14.0);
                 }
 
-                render_overall_progress(ui, palette, copy.hint, progress);
+                render_overall_progress(ui, palette, copy.hint, progress, waiting.as_deref());
                 ui.add_space(14.0);
 
                 (panel_action, hold_active, left_action_label) = manual.as_deref().map_or_else(
@@ -2010,7 +2081,7 @@ pub(crate) fn render_chrome(
         None,
         left_action,
         PrimaryBtn {
-            label: "Waiting\u{2026}",
+            label: waiting.as_deref().unwrap_or("Waiting\u{2026}"),
             disabled: true,
         },
     );
@@ -2027,6 +2098,7 @@ fn render_overall_progress(
     palette: ThemePalette,
     hint: Option<&str>,
     progress: &DownloadProgress,
+    waiting_headline: Option<&str>,
 ) {
     box_frame(palette).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -2048,20 +2120,27 @@ fn render_overall_progress(
         let ex_pct = progress.extract_overall_pct();
 
         let preparing = progress.is_preparing_install();
-        let phase_line = if preparing {
-            "Preparing to install \u{2026}".to_string()
-        } else {
-            let (verb, n, t, p) = match phase {
-                InstallPhase::Hashing => (InstallPhase::Hashing.verb(), h_n, h_total, h_pct),
-                InstallPhase::Downloading => {
-                    (InstallPhase::Downloading.verb(), dl_n, dl_total, dl_pct)
+        let phase_line = waiting_headline.map_or_else(
+            || {
+                if preparing {
+                    "Preparing to install \u{2026}".to_string()
+                } else {
+                    let (verb, n, t, p) = match phase {
+                        InstallPhase::Hashing => {
+                            (InstallPhase::Hashing.verb(), h_n, h_total, h_pct)
+                        }
+                        InstallPhase::Downloading => {
+                            (InstallPhase::Downloading.verb(), dl_n, dl_total, dl_pct)
+                        }
+                        InstallPhase::Extracting => {
+                            (InstallPhase::Extracting.verb(), ex_n, ex_total, ex_pct)
+                        }
+                    };
+                    format!("{verb} \u{2026} {n} / {t} mods \u{00B7} {p}%")
                 }
-                InstallPhase::Extracting => {
-                    (InstallPhase::Extracting.verb(), ex_n, ex_total, ex_pct)
-                }
-            };
-            format!("{verb} \u{2026} {n} / {t} mods \u{00B7} {p}%")
-        };
+            },
+            ToString::to_string,
+        );
         ui.label(
             egui::RichText::new(phase_line)
                 .size(15.0)
@@ -3747,6 +3826,50 @@ mod tests {
             page_url: "https://www.nexusmods.com/baldursgate2ee/mods/1".to_string(),
             reason: ManualDownloadReason::NotAutoResolvable,
             aliases: Vec::new(),
+            display_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn cache_check_fires_while_manual_row_waits() {
+        let root = ManualDlTempRoot::new("cache-beside-hold");
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "manualdl-cache-beside-hold",
+            );
+        app.install_screen_state.pipeline_flags.set_armed(true);
+        app.install_screen_state
+            .pipeline_flags
+            .set_explicit_resolve_started(true);
+        app.wizard_state.step2.update_selected_check_running = false;
+        app.wizard_state.step1.mods_archive_folder =
+            root.path.join("archives").to_string_lossy().into_owned();
+        app.wizard_state.step2.update_selected_update_assets =
+            vec![test_asset("ModA", "https://example.com/a.zip")];
+        app.wizard_state.step2.update_selected_manual_downloads = vec![manual_request("Ascension")];
+        let inputs = LivePipelineInputs {
+            destination: "C:/dest".to_string(),
+            game: crate::registry::model::Game::BGEE,
+            workflow: crate::install_runtime::flag_policies::InstallWorkflow::PasteAndInstall,
+            code: String::new(),
+        };
+
+        let alive = enter_manual_hold_once_with_poll(&mut app, &inputs, Duration::from_millis(20));
+        stage_and_kick_archive_skip_once(&mut app, &inputs);
+
+        assert!(
+            app.install_screen_state
+                .manual_downloads
+                .manual_hold_active(),
+            "the manual hold is still active"
+        );
+        assert!(
+            app.install_screen_state.pipeline_flags.archives_staged(),
+            "the cache check fires on the same frame a manual row is still waiting"
+        );
+        app.manual_download_rx = None;
+        if let Some(alive) = alive {
+            manual_download_watcher::wait_for_thread_exit(&alive);
         }
     }
 
@@ -4184,6 +4307,92 @@ mod tests {
     }
 
     #[test]
+    fn continue_without_records_the_lists_own_label() {
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "manualdl-skip-label",
+            );
+        let mut request = manual_request("WL_HOUSERULES");
+        request.display_name = "House Rules".to_string();
+        app.install_screen_state.manual_downloads.rows = vec![manual_row_from_request(&request)];
+        app.wizard_state.step2.update_selected_manual_downloads = vec![request];
+
+        confirm_continue_without(&mut app);
+
+        assert_eq!(
+            app.install_screen_state.manual_downloads.rows[0].label,
+            "House Rules"
+        );
+        assert_eq!(
+            app.wizard_state.step2.skipped_manual_downloads,
+            vec!["WL_HOUSERULES".to_string()],
+            "the workspace toast names the mod the way the list does"
+        );
+    }
+
+    #[test]
+    fn found_row_records_download_once() {
+        let root = ManualDlTempRoot::new("found-once");
+        let dropped = root.path.join("Ascension-v2.1.zip");
+        std::fs::write(&dropped, b"content").unwrap();
+        let archive_dir = root.path.join("archives");
+
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "manualdl-found-once",
+            );
+        let request = manual_request("Ascension");
+        app.wizard_state.step2.update_selected_manual_downloads = vec![request];
+        app.wizard_state.step2.update_selected_manual_sources = vec!["Ascension".to_string()];
+        app.install_screen_state.manual_downloads.rows = vec![ManualDownloadRow {
+            label: "Ascension".to_string(),
+            from: "nexusmods.com".to_string(),
+            page_url: "https://www.nexusmods.com/baldursgate2ee/mods/1".to_string(),
+            status: ManualRowStatus::Waiting,
+        }];
+
+        apply_manual_match(
+            &mut app,
+            0,
+            &dropped,
+            &archive_dir,
+            ProbeMatch::Tp2 {
+                store_name: "setup-ascension__manual__2.1.zip".to_string(),
+            },
+            &[],
+        );
+
+        assert_eq!(
+            app.wizard_state
+                .step2
+                .update_selected_downloaded_sources
+                .len(),
+            1,
+            "the found archive is recorded as downloaded exactly once"
+        );
+        assert!(
+            app.wizard_state.step2.update_selected_downloaded_sources[0]
+                .starts_with("Ascension -> ")
+        );
+
+        let mut skip_indices = std::collections::HashSet::new();
+        mark_empty_url_assets_as_cache_hits(&mut app, &mut skip_indices);
+
+        assert_eq!(
+            app.wizard_state
+                .step2
+                .update_selected_downloaded_sources
+                .len(),
+            1,
+            "the empty-URL pass does not record the same label twice"
+        );
+        assert!(
+            skip_indices.contains(&0),
+            "the found asset's index is skipped"
+        );
+    }
+
+    #[test]
     fn empty_url_assets_join_skip_indices() {
         let mut app =
             crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
@@ -4273,5 +4482,76 @@ mod tests {
             outcome, None,
             "the workspace must not open while the post-extract scan is still running"
         );
+    }
+
+    #[test]
+    fn ingest_waits_for_manual_hold() {
+        let root = ManualDlTempRoot::new("ingest-waits");
+        let destination = root.path.join("dest").to_string_lossy().into_owned();
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "manualdl-ingest-waits",
+            );
+        app.install_screen_state
+            .pipeline_flags
+            .set_download_phase_started(true);
+        app.wizard_state.step2.update_selected_downloaded_sources =
+            vec!["Ascension -> C:/archives/Ascension.zip".to_string()];
+        app.install_screen_state.manual_downloads.rows = vec![ManualDownloadRow {
+            label: "Ascension".to_string(),
+            from: "nexusmods.com".to_string(),
+            page_url: String::new(),
+            status: ManualRowStatus::Waiting,
+        }];
+
+        ingest_downloaded_archives_once(&mut app, &destination);
+        assert!(
+            !app.install_screen_state.pipeline_flags.archives_ingested(),
+            "the store-and-lock step waits for the manual hold"
+        );
+
+        app.install_screen_state.manual_downloads.rows[0].status = ManualRowStatus::Found;
+        ingest_downloaded_archives_once(&mut app, &destination);
+        assert!(
+            app.install_screen_state.pipeline_flags.archives_ingested(),
+            "ingest proceeds once every manual row is found"
+        );
+    }
+
+    #[test]
+    fn continue_without_waits_for_deferred_extract() {
+        let mut app =
+            crate::ui::orchestrator::orchestrator_app::OrchestratorApp::new_isolated_for_test(
+                "manualdl-continue-without-deferred",
+            );
+        app.install_screen_state.pipeline_flags.set_armed(true);
+        app.install_screen_state
+            .pipeline_flags
+            .set_explicit_resolve_started(true);
+        app.wizard_state.modlist_auto_build_active = true;
+        app.install_screen_state.manual_downloads.continue_without = true;
+        app.install_screen_state.manual_downloads.extract_deferred = true;
+
+        let outcome = install_empty_asset_clean_finish(&mut app);
+
+        assert_eq!(
+            outcome, None,
+            "the workspace must not open while an extract is still deferred"
+        );
+    }
+
+    #[test]
+    fn manual_row_prefers_display_name_and_strips_www() {
+        let mut request = manual_request("Ascension");
+        request.display_name = "House Rules".to_string();
+        request.page_url = "https://www.nexusmods.com/baldursgate2ee/mods/1".to_string();
+        let row = manual_row_from_request(&request);
+        assert_eq!(row.label, "House Rules");
+        assert_eq!(row.from, "nexusmods.com");
+
+        let mut fallback = manual_request("Ascension");
+        fallback.display_name = String::new();
+        let fallback_row = manual_row_from_request(&fallback);
+        assert_eq!(fallback_row.label, "Ascension");
     }
 }

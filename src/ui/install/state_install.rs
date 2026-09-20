@@ -297,6 +297,7 @@ pub(crate) struct ManualDownloadsState {
     pub(crate) continue_without: bool,
     pub(crate) confirm_open: bool,
     pub(crate) last_refusal: Option<String>,
+    pub(crate) extract_deferred: bool,
 }
 
 impl ManualDownloadsState {
@@ -332,6 +333,16 @@ impl ManualDownloadsState {
             "Continue without 1 mod".to_string()
         } else {
             format!("Continue without {n} mods")
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn waiting_label(&self) -> String {
+        let n = self.pending_count();
+        if n == 1 {
+            "Waiting for 1 manual download".to_string()
+        } else {
+            format!("Waiting for {n} manual downloads")
         }
     }
 }
@@ -511,6 +522,21 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(three.continue_label(), "Continue without 3 mods");
+    }
+
+    #[test]
+    fn waiting_label_singular_plural() {
+        let one = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Waiting)],
+            ..Default::default()
+        };
+        assert_eq!(one.waiting_label(), "Waiting for 1 manual download");
+
+        let two = ManualDownloadsState {
+            rows: vec![row(ManualRowStatus::Waiting), row(ManualRowStatus::Waiting)],
+            ..Default::default()
+        };
+        assert_eq!(two.waiting_label(), "Waiting for 2 manual downloads");
     }
 
     #[test]

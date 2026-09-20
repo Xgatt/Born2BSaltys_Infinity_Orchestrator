@@ -310,6 +310,7 @@ mod tests {
             page_url: String::new(),
             reason: ManualDownloadReason::NotAutoResolvable,
             aliases: Vec::new(),
+            display_name: String::new(),
         }
     }
 

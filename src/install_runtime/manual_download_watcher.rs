@@ -21,14 +21,16 @@ pub enum WatchEvent {
 pub fn start_watch<S: std::hash::BuildHasher + Send + 'static>(
     archive_dir: PathBuf,
     wanted_sizes: HashSet<u64, S>,
+    ignored_names: HashSet<String, S>,
     poll: Duration,
 ) -> (Receiver<WatchEvent>, Arc<()>) {
-    spawn_watch_thread(archive_dir, wanted_sizes, poll)
+    spawn_watch_thread(archive_dir, wanted_sizes, ignored_names, poll)
 }
 
 pub(crate) fn spawn_watch_thread<S: std::hash::BuildHasher + Send + 'static>(
     archive_dir: PathBuf,
     wanted_sizes: HashSet<u64, S>,
+    ignored_names: HashSet<String, S>,
     poll: Duration,
 ) -> (Receiver<WatchEvent>, Arc<()>) {
     let (tx, rx) = mpsc::channel();
@@ -53,7 +55,10 @@ pub(crate) fn spawn_watch_thread<S: std::hash::BuildHasher + Send + 'static>(
                     let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                         continue;
                     };
-                    if is_in_progress_name(name) {
+                    if is_in_progress_name(name)
+                        || name.starts_with(".bio-")
+                        || ignored_names.contains(&name.to_lowercase())
+                    {
                         continue;
                     }
                     let size = metadata.len();
@@ -160,8 +165,12 @@ mod tests {
         let root = TempRoot::new();
         let path = root.path.join("Ready.dat");
         fs::write(&path, b"stable content").unwrap();
-        let (rx, alive) =
-            spawn_watch_thread(root.path.clone(), HashSet::new(), Duration::from_millis(30));
+        let (rx, alive) = spawn_watch_thread(
+            root.path.clone(),
+            HashSet::new(),
+            HashSet::new(),
+            Duration::from_millis(30),
+        );
         let first_pass = drain_candidates(&rx, Duration::from_secs(1));
         assert_eq!(first_pass.len(), 1, "reported exactly once within 1s");
         let second_pass = drain_candidates(&rx, Duration::from_millis(200));
@@ -178,8 +187,12 @@ mod tests {
         let root = TempRoot::new();
         let path = root.path.join("Growing.dat");
         fs::write(&path, b"a").unwrap();
-        let (rx, alive) =
-            spawn_watch_thread(root.path.clone(), HashSet::new(), Duration::from_millis(30));
+        let (rx, alive) = spawn_watch_thread(
+            root.path.clone(),
+            HashSet::new(),
+            HashSet::new(),
+            Duration::from_millis(30),
+        );
         let deadline = std::time::Instant::now() + Duration::from_millis(150);
         let mut candidates_while_growing = Vec::new();
         let mut payload = Vec::new();
@@ -206,8 +219,12 @@ mod tests {
         let root = TempRoot::new();
         let path = root.path.join("Corrupt.zip");
         fs::write(&path, b"not actually a zip file").unwrap();
-        let (rx, alive) =
-            spawn_watch_thread(root.path.clone(), HashSet::new(), Duration::from_millis(30));
+        let (rx, alive) = spawn_watch_thread(
+            root.path.clone(),
+            HashSet::new(),
+            HashSet::new(),
+            Duration::from_millis(30),
+        );
         let errors = drain_errors(&rx, Duration::from_secs(1));
         assert_eq!(errors.len(), 1, "reported exactly once within 1s");
         assert!(
@@ -224,8 +241,36 @@ mod tests {
     #[test]
     fn watcher_stops_when_receiver_dropped() {
         let root = TempRoot::new();
-        let (rx, alive) =
-            spawn_watch_thread(root.path.clone(), HashSet::new(), Duration::from_millis(20));
+        let (rx, alive) = spawn_watch_thread(
+            root.path.clone(),
+            HashSet::new(),
+            HashSet::new(),
+            Duration::from_millis(20),
+        );
+        drop(rx);
+        wait_for_thread_exit(&alive);
+    }
+
+    #[test]
+    fn watcher_skips_ignored_and_bookkeeping_names() {
+        let root = TempRoot::new();
+        fs::write(root.path.join("own.zip"), b"already staged").unwrap();
+        fs::write(root.path.join(".bio-archive-hashcache.json"), b"{}").unwrap();
+        fs::write(root.path.join("other.dat"), b"landed").unwrap();
+        let mut ignored_names: HashSet<String> = HashSet::new();
+        ignored_names.insert("own.zip".to_string());
+        let (rx, alive) = spawn_watch_thread(
+            root.path.clone(),
+            HashSet::new(),
+            ignored_names,
+            Duration::from_millis(30),
+        );
+        let found = drain_candidates(&rx, Duration::from_secs(1));
+        assert_eq!(
+            found,
+            vec![root.path.join("other.dat")],
+            "only the file that is neither ignored nor BIO bookkeeping is reported"
+        );
         drop(rx);
         wait_for_thread_exit(&alive);
     }

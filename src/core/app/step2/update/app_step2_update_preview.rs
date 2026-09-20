@@ -241,6 +241,7 @@ fn queue_mod_update_preview(
                     page_url: source.url.clone(),
                     reason: ManualDownloadReason::NotAutoResolvable,
                     aliases: source.aliases.clone(),
+                    display_name: source.name.clone(),
                 },
             );
         }
@@ -257,6 +258,7 @@ fn queue_mod_update_preview(
                 page_url: String::new(),
                 reason: ManualDownloadReason::NoSourceEntry,
                 aliases: Vec::new(),
+                display_name: String::new(),
             },
         );
     }
@@ -456,6 +458,7 @@ fn queue_target_mod_update_preview(
                     page_url: source.url.clone(),
                     reason: ManualDownloadReason::NotAutoResolvable,
                     aliases: source.aliases.clone(),
+                    display_name: source.name.clone(),
                 },
             );
         }
@@ -472,6 +475,7 @@ fn queue_target_mod_update_preview(
                 page_url: String::new(),
                 reason: ManualDownloadReason::NoSourceEntry,
                 aliases: Vec::new(),
+                display_name: String::new(),
             },
         );
     }
@@ -532,6 +536,7 @@ fn queue_pending_target_update_preview(
                     page_url: source.url.clone(),
                     reason: ManualDownloadReason::NotAutoResolvable,
                     aliases: source.aliases.clone(),
+                    display_name: source.name.clone(),
                 },
             );
         }
@@ -547,6 +552,7 @@ fn queue_pending_target_update_preview(
                 page_url: String::new(),
                 reason: ManualDownloadReason::NoSourceEntry,
                 aliases: Vec::new(),
+                display_name: String::new(),
             },
         );
     }
@@ -777,6 +783,7 @@ fn extend_log_pending_update_requests(
                         page_url: source.url.clone(),
                         reason: ManualDownloadReason::NotAutoResolvable,
                         aliases: source.aliases.clone(),
+                        display_name: source.name.clone(),
                     },
                 );
             }
@@ -792,6 +799,7 @@ fn extend_log_pending_update_requests(
                     page_url: String::new(),
                     reason: ManualDownloadReason::NoSourceEntry,
                     aliases: Vec::new(),
+                    display_name: String::new(),
                 },
             );
         }
@@ -1050,6 +1058,45 @@ mod tests {
             request.page_url,
             "https://www.nexusmods.com/baldursgateenhancededition/mods/1"
         );
+    }
+
+    #[test]
+    fn manual_request_carries_source_name() {
+        use crate::app::mod_downloads::ModDownloadSource;
+        use crate::app::state::Step2ModState;
+
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![Step2ModState {
+            name: "Ascension".to_string(),
+            tp_file: "ascension/setup-ascension.tp2".to_string(),
+            tp2_path: String::new(),
+            readme_path: None,
+            ini_path: None,
+            web_url: None,
+            package_marker: None,
+            latest_checked_version: None,
+            update_locked: false,
+            mod_prompt_summary: None,
+            mod_prompt_events: Vec::new(),
+            checked: true,
+            hidden_components: Vec::new(),
+            components: Vec::new(),
+        }];
+        let sources = ModDownloadsLoad {
+            sources: vec![ModDownloadSource {
+                tp2: "ascension/setup-ascension.tp2".to_string(),
+                url: "https://www.nexusmods.com/baldursgateenhancededition/mods/1".to_string(),
+                name: "House Rules".to_string(),
+                ..ModDownloadSource::default()
+            }],
+            error: None,
+        };
+        let mut rx = None;
+        preview_update_selected(&mut state, &mut rx, &sources);
+
+        assert_eq!(state.step2.update_selected_manual_downloads.len(), 1);
+        let request = &state.step2.update_selected_manual_downloads[0];
+        assert_eq!(request.display_name, "House Rules");
     }
 
     #[test]

@@ -743,6 +743,7 @@ impl OrchestratorApp {
             &mut self.install_screen_state.download_progress,
             &self.extract_progress,
             install_ctx_refs_path.as_deref(),
+            &mut self.install_screen_state.manual_downloads,
         );
         Self::drain_extract_parallel(
             &mut self.wizard_state,
@@ -755,6 +756,7 @@ impl OrchestratorApp {
         if self.nav == crate::ui::orchestrator::nav_destination::NavDestination::Install {
             crate::ui::install::stage_downloading::drain_manual_download_events(self);
         }
+        self.start_deferred_extract_once();
 
         app_step2_saved_log_flow::advance_pending_saved_log_flow(
             &mut self.wizard_state,
@@ -763,6 +765,56 @@ impl OrchestratorApp {
             &mut self.step2_progress_queue,
             &mut self.step2_update_check_rx,
             &mut self.step2_update_download_rx,
+        );
+    }
+
+    fn kick_parallel_extract(
+        wizard_state: &mut WizardState,
+        extract_parallel_rx: &mut Option<
+            Receiver<crate::install_runtime::extract_parallel::ExtractAssetEvent>,
+        >,
+        extract_progress: &Arc<std::sync::Mutex<Option<(usize, usize)>>>,
+        install_ctx_installed_refs_path: Option<&std::path::Path>,
+    ) {
+        use crate::install_runtime::extract_parallel::start_parallel_extract;
+
+        if let Some(rx) = start_parallel_extract(
+            wizard_state,
+            extract_progress,
+            install_ctx_installed_refs_path,
+        ) {
+            *extract_parallel_rx = Some(rx);
+            tracing::info!(
+                target = "orchestrator",
+                "parallel extract receiver installed"
+            );
+        } else {
+            tracing::info!(
+                target = "orchestrator",
+                "parallel extract receiver not installed"
+            );
+        }
+    }
+
+    fn start_deferred_extract_once(&mut self) {
+        if !self.install_screen_state.manual_downloads.extract_deferred
+            || self
+                .install_screen_state
+                .manual_downloads
+                .manual_hold_active()
+        {
+            return;
+        }
+        self.install_screen_state.manual_downloads.extract_deferred = false;
+        self.wizard_state.step2.update_selected_extract_running = false;
+        let install_ctx_refs_path = self.active_install_modlist_id.as_deref().map(|id| {
+            crate::registry::store_workspace::modlist_data_dir(id).join("mod_installed_refs.toml")
+        });
+        Self::kick_parallel_extract(
+            &mut self.wizard_state,
+            &mut self.extract_parallel_rx,
+            &self.extract_progress,
+            install_ctx_refs_path.as_deref(),
         );
     }
 
@@ -777,8 +829,8 @@ impl OrchestratorApp {
         progress: &mut crate::ui::install::stage_downloading::DownloadProgress,
         extract_progress: &Arc<std::sync::Mutex<Option<(usize, usize)>>>,
         install_ctx_installed_refs_path: Option<&std::path::Path>,
+        manual_downloads: &mut crate::ui::install::state_install::ManualDownloadsState,
     ) {
-        use crate::install_runtime::extract_parallel::start_parallel_extract;
         use crate::install_runtime::stream_downloader::{
             StreamDownloadEvent, apply_result_state, deterministic_dest,
         };
@@ -826,30 +878,29 @@ impl OrchestratorApp {
                 Ok(StreamDownloadEvent::Finished(result)) => {
                     let downloaded = result.downloaded.len();
                     let failed = result.failed.len();
+                    *stream_download_rx = None;
+                    apply_result_state(wizard_state, result);
+                    if manual_downloads.manual_hold_active() {
+                        manual_downloads.extract_deferred = true;
+                        wizard_state.step2.update_selected_extract_running = true;
+                        tracing::info!(
+                            target = "orchestrator",
+                            "stream download finished; extract deferred until manual downloads resolve"
+                        );
+                        return;
+                    }
                     tracing::info!(
                         target = "orchestrator",
                         downloaded,
                         failed,
                         "stream download Finished drained; starting parallel extract"
                     );
-                    *stream_download_rx = None;
-                    apply_result_state(wizard_state, result);
-                    if let Some(rx) = start_parallel_extract(
+                    Self::kick_parallel_extract(
                         wizard_state,
+                        extract_parallel_rx,
                         extract_progress,
                         install_ctx_installed_refs_path,
-                    ) {
-                        *extract_parallel_rx = Some(rx);
-                        tracing::info!(
-                            target = "orchestrator",
-                            "parallel extract receiver installed"
-                        );
-                    } else {
-                        tracing::info!(
-                            target = "orchestrator",
-                            "parallel extract receiver not installed"
-                        );
-                    }
+                    );
                     return;
                 }
                 Err(TryRecvError::Empty) => return,
@@ -2179,6 +2230,7 @@ mod tests {
                 page_url: String::new(),
                 reason: crate::app::state::ManualDownloadReason::NotAutoResolvable,
                 aliases: Vec::new(),
+                display_name: String::new(),
             }];
         app.install_screen_state.manual_downloads.rows =
             vec![crate::ui::install::state_install::ManualDownloadRow {
@@ -2255,6 +2307,7 @@ mod tests {
                 page_url: String::new(),
                 reason: crate::app::state::ManualDownloadReason::NotAutoResolvable,
                 aliases: Vec::new(),
+                display_name: String::new(),
             }];
         app.install_screen_state.manual_downloads.rows =
             vec![crate::ui::install::state_install::ManualDownloadRow {
@@ -2292,6 +2345,102 @@ mod tests {
         assert!(
             app.manual_download_rx.is_some(),
             "the receiver stays open while the Install page is not showing"
+        );
+    }
+
+    #[test]
+    fn stream_finish_during_hold_defers_extract() {
+        let mut app = OrchestratorApp::new_isolated_for_test("manualdl-defer-finish");
+        app.install_screen_state.manual_downloads.rows =
+            vec![crate::ui::install::state_install::ManualDownloadRow {
+                label: "Ascension".to_string(),
+                from: "nexusmods.com".to_string(),
+                page_url: String::new(),
+                status: crate::ui::install::state_install::ManualRowStatus::Waiting,
+            }];
+
+        let (tx, rx) = std::sync::mpsc::channel::<
+            crate::install_runtime::stream_downloader::StreamDownloadEvent,
+        >();
+        tx.send(
+            crate::install_runtime::stream_downloader::StreamDownloadEvent::Finished(
+                crate::install_runtime::stream_downloader::StreamDownloadResult::default(),
+            ),
+        )
+        .expect("send Finished");
+        drop(tx);
+        app.stream_download_rx = Some(rx);
+        app.wizard_state.modlist_auto_build_active = true;
+        app.wizard_state.modlist_auto_build_waiting_for_install = true;
+
+        app.poll_step2_channels();
+        app.poll_step2_channels();
+
+        assert!(
+            app.install_screen_state.manual_downloads.extract_deferred,
+            "the deferred mark is set while the hold is active"
+        );
+        assert!(
+            app.wizard_state.step2.update_selected_extract_running,
+            "the deferred window reads as extraction busy"
+        );
+        assert!(
+            app.wizard_state.modlist_auto_build_active,
+            "the auto build does not finish or stop while extraction is deferred"
+        );
+        assert_eq!(
+            app.wizard_state.current_step, 0,
+            "the pipeline does not route to the install step before extraction"
+        );
+        assert!(
+            app.stream_download_rx.is_none(),
+            "the stream receiver is consumed on Finished"
+        );
+        assert!(
+            app.extract_parallel_rx.is_none(),
+            "extraction is not started while a manual row still waits"
+        );
+
+        app.start_deferred_extract_once();
+        assert!(
+            app.install_screen_state.manual_downloads.extract_deferred,
+            "the mark stays set while the row still waits"
+        );
+
+        app.install_screen_state.manual_downloads.rows[0].status =
+            crate::ui::install::state_install::ManualRowStatus::Found;
+        app.start_deferred_extract_once();
+        assert!(
+            !app.install_screen_state.manual_downloads.extract_deferred,
+            "the mark clears once the row is found"
+        );
+        assert!(
+            !app.wizard_state.step2.update_selected_extract_running,
+            "with nothing to extract the busy flag is released with the mark"
+        );
+    }
+
+    #[test]
+    fn stream_finish_without_hold_never_defers() {
+        let mut app = OrchestratorApp::new_isolated_for_test("manualdl-no-hold-finish");
+
+        let (tx, rx) = std::sync::mpsc::channel::<
+            crate::install_runtime::stream_downloader::StreamDownloadEvent,
+        >();
+        tx.send(
+            crate::install_runtime::stream_downloader::StreamDownloadEvent::Finished(
+                crate::install_runtime::stream_downloader::StreamDownloadResult::default(),
+            ),
+        )
+        .expect("send Finished");
+        drop(tx);
+        app.stream_download_rx = Some(rx);
+
+        app.poll_step2_channels();
+
+        assert!(
+            !app.install_screen_state.manual_downloads.extract_deferred,
+            "no manual rows means no hold, so extraction is not deferred"
         );
     }
 }
