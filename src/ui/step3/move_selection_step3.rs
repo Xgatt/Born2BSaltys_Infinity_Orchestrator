@@ -26,6 +26,7 @@ pub(crate) struct MoveSelectionContext<'a> {
     pub anchor: &'a mut Option<usize>,
     pub clone_seq: &'a mut usize,
     pub locked_blocks: &'a [String],
+    pub collapsed_blocks: &'a [String],
     pub undo_stack: &'a mut Vec<Vec<Step3ItemState>>,
     pub redo_stack: &'a mut Vec<Vec<Step3ItemState>>,
 }
@@ -34,6 +35,7 @@ pub(crate) struct MoveSelectionContext<'a> {
 pub(crate) fn moving_set(
     items: &[Step3ItemState],
     selected: &[usize],
+    collapsed_blocks: &[String],
     clicked_idx: usize,
 ) -> Vec<usize> {
     let operands: Vec<usize> = if selected.contains(&clicked_idx)
@@ -48,11 +50,21 @@ pub(crate) fn moving_set(
         vec![clicked_idx]
     };
 
+    let operand_set: HashSet<usize> = operands.iter().copied().collect();
     let mut moving: HashSet<usize> = HashSet::new();
     for idx in operands {
         if items[idx].is_parent {
-            for child_idx in blocks::block_indices(items, idx) {
-                moving.insert(child_idx);
+            let block = blocks::block_indices(items, idx);
+            let some_other_member_is_an_operand = block
+                .iter()
+                .any(|member| *member != idx && operand_set.contains(member));
+            let collapsed = collapsed_blocks.contains(&items[idx].block_id);
+            if some_other_member_is_an_operand && !collapsed {
+                moving.insert(idx);
+            } else {
+                for child_idx in block {
+                    moving.insert(child_idx);
+                }
             }
         } else {
             moving.insert(idx);
@@ -192,7 +204,7 @@ pub(crate) fn move_selection(
         return MoveSelectionOutcome::NothingToMove;
     }
 
-    let moving = moving_set(ctx.items, ctx.selected, clicked_idx);
+    let moving = moving_set(ctx.items, ctx.selected, ctx.collapsed_blocks, clicked_idx);
 
     if is_locked(ctx.items, &moving, ctx.locked_blocks) {
         return MoveSelectionOutcome::RefusedLocked;
@@ -288,6 +300,7 @@ mod tests {
                 anchor: &mut anchor,
                 clone_seq: &mut clone_seq,
                 locked_blocks,
+                collapsed_blocks: &[],
                 undo_stack: &mut undo_stack,
                 redo_stack: &mut redo_stack,
             };
@@ -543,6 +556,7 @@ mod tests {
                 anchor: &mut anchor,
                 clone_seq: &mut clone_seq,
                 locked_blocks: &[],
+                collapsed_blocks: &[],
                 undo_stack: &mut undo_stack,
                 redo_stack: &mut redo_stack,
             };
@@ -582,6 +596,114 @@ mod tests {
     }
 
     #[test]
+    fn a_header_alone_moves_its_whole_mod() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+            child("B", "B::b0", "2", 3),
+            child("B", "B::b0", "3", 4),
+        ];
+        let selected = vec![2];
+
+        assert_eq!(moving_set(&items, &selected, &[], 2), vec![2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn a_header_with_some_components_moves_only_those_rows() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+            child("B", "B::b0", "2", 3),
+            child("B", "B::b0", "3", 4),
+        ];
+        let selected = vec![2, 3];
+
+        assert_eq!(moving_set(&items, &selected, &[], 2), vec![2, 3]);
+    }
+
+    #[test]
+    fn a_collapsed_header_moves_its_whole_mod_even_with_hidden_components_lit() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+            child("B", "B::b0", "2", 3),
+            child("B", "B::b0", "3", 4),
+        ];
+        let selected = vec![2, 3];
+        let collapsed = vec!["B::b0".to_string()];
+        let another_mod_collapsed = vec!["A::b0".to_string()];
+
+        assert_eq!(
+            moving_set(&items, &selected, &collapsed, 2),
+            vec![2, 3, 4, 5]
+        );
+        assert_eq!(
+            moving_set(&items, &selected, &another_mod_collapsed, 2),
+            vec![2, 3]
+        );
+    }
+
+    #[test]
+    fn grabbing_a_dark_header_still_moves_that_mod_alone() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+            child("B", "B::b0", "2", 3),
+            child("B", "B::b0", "3", 4),
+        ];
+        let selected = vec![3];
+
+        assert_eq!(moving_set(&items, &selected, &[], 2), vec![2, 3, 4, 5]);
+    }
+
+    fn assert_every_row_sits_under_a_header_of_its_own_mod(items: &[Step3ItemState]) {
+        for (idx, item) in items.iter().enumerate() {
+            if item.is_parent {
+                continue;
+            }
+            let parent = items[..idx]
+                .iter()
+                .rev()
+                .find(|i| i.is_parent)
+                .unwrap_or_else(|| panic!("component at {idx} has no header above it"));
+            assert_eq!(parent.block_id, item.block_id);
+            assert_eq!(parent.mod_name, item.mod_name);
+        }
+    }
+
+    #[test]
+    fn a_header_moved_with_some_components_leaves_the_rest_under_a_split_header() {
+        let mut items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+            child("B", "B::b0", "2", 3),
+            child("B", "B::b0", "3", 4),
+        ];
+        let mut selected = vec![2, 3];
+        let (outcome, ..) = run(&mut items, &mut selected, &[], 2, MoveSelectionTarget::Top);
+        assert_eq!(outcome, MoveSelectionOutcome::Moved);
+        assert_every_row_sits_under_a_header_of_its_own_mod(&items);
+        assert!(items[0].is_parent);
+        assert!(!items[0].parent_placeholder);
+        assert_eq!(items[0].mod_name, "B");
+        let placeholder = items
+            .iter()
+            .find(|item| item.is_parent && item.parent_placeholder)
+            .expect("the left-behind components get a split header");
+        assert_eq!(placeholder.mod_name, "B");
+    }
+
+    #[test]
     fn grabbing_the_header_of_a_fully_selected_mod_carries_the_whole_selection() {
         let items = vec![
             parent("A", "A::b0"),
@@ -596,9 +718,9 @@ mod tests {
         let components_only = vec![2, 4, 6, 7];
 
         assert_eq!(
-            moving_set(&items, &components_only, 3),
+            moving_set(&items, &components_only, &[], 3),
             vec![2, 3, 4, 5, 6, 7]
         );
-        assert_eq!(moving_set(&items, &components_only, 0), vec![0, 1, 2]);
+        assert_eq!(moving_set(&items, &components_only, &[], 0), vec![0, 1, 2]);
     }
 }

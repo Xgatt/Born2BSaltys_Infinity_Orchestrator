@@ -972,7 +972,7 @@ fn handle_drag_start(
     if !drag_response.drag_started() {
         return DragStart::NotStarted;
     }
-    let moving = moving_set(ctx.items, ctx.selected, idx);
+    let moving = moving_set(ctx.items, ctx.selected, ctx.collapsed_blocks, idx);
     if is_locked(ctx.items, &moving, ctx.locked_blocks) {
         *ctx.drag_from = None;
         ctx.drag_indices.clear();
@@ -1029,7 +1029,6 @@ fn run_drag_pipeline(ui: &egui::Ui, ctx: &mut RenderCtx<'_>, visible_rows: &[(us
         drag_over: ctx.drag_over,
         drag_indices: ctx.drag_indices,
         drag_grab_offset: ctx.drag_grab_offset,
-        drag_grab_pos_in_block: ctx.drag_grab_pos_in_block,
         drag_row_h: ctx.drag_row_h,
         visible_rows,
     };
@@ -1115,7 +1114,7 @@ fn flush_row_outcome(
         _drag_grab_pos_in_block,
         _drag_row_h,
         _last_insert_at,
-        _collapsed_blocks,
+        collapsed_blocks,
         clone_seq,
         locked_blocks,
         undo_stack,
@@ -1127,6 +1126,7 @@ fn flush_row_outcome(
         anchor,
         clone_seq,
         locked_blocks: locked_blocks.as_slice(),
+        collapsed_blocks: collapsed_blocks.as_slice(),
         undo_stack,
         redo_stack,
     };

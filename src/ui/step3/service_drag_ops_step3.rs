@@ -26,7 +26,6 @@ pub(crate) struct DragPointerContext<'a> {
     pub drag_over: &'a mut Option<usize>,
     pub drag_indices: &'a [usize],
     pub drag_grab_offset: &'a f32,
-    pub drag_grab_pos_in_block: &'a usize,
     pub drag_row_h: &'a f32,
     pub visible_rows: &'a [(usize, egui::Rect)],
 }
@@ -139,37 +138,22 @@ pub(crate) fn draw_insert_marker(
 
 pub(crate) fn update_drag_target_from_pointer(ui: &egui::Ui, ctx: &mut DragPointerContext<'_>) {
     let items = ctx.items;
-    let drag_from = ctx.drag_from;
+    let Some(grabbed) = ctx.drag_from else {
+        return;
+    };
     let drag_over = &mut *ctx.drag_over;
     let drag_indices = ctx.drag_indices;
     let drag_grab_offset = ctx.drag_grab_offset;
-    let drag_grab_pos_in_block = ctx.drag_grab_pos_in_block;
     let _ = ctx.drag_row_h;
     let visible_rows = ctx.visible_rows;
-    if drag_from.is_none() {
-        return;
-    }
     if let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) {
-        let n = visible_rows.len();
-        let k = visible_rows
-            .iter()
-            .filter(|(idx, _)| drag_indices.contains(idx))
-            .count()
-            .max(1);
-        if n > 0 && k > 0 {
-            let target_y = pointer.y - *drag_grab_offset;
-            let desired_grabbed_row = visible_rows
-                .iter()
-                .enumerate()
-                .filter(|(_, (_, rect))| rect.top() <= target_y)
-                .map(|(i, _)| i)
-                .next_back()
-                .unwrap_or(0);
-            let desired_start = desired_grabbed_row.saturating_sub(*drag_grab_pos_in_block);
-            let max_start = n.saturating_sub(k);
-            let desired_block_start = desired_start.min(max_start);
-            *drag_over = Some(desired_block_start.min(items.len()));
-        }
+        let slot = drag::pointer_to_visible_slot(
+            visible_rows,
+            drag_indices,
+            *grabbed,
+            pointer.y - *drag_grab_offset,
+        );
+        *drag_over = Some(slot.min(items.len()));
     }
 }
 
@@ -378,6 +362,31 @@ mod tests {
         assert_eq!(items[4].mod_name, "B");
         assert_eq!(selected, vec![2, 3]);
         assert_every_component_sits_under_its_own_header(&items);
+    }
+
+    #[test]
+    fn a_header_released_with_some_components_leaves_the_rest_a_split_header() {
+        let mut items = vec![
+            row("B", "__PARENT__", true),
+            row("B", "1", false),
+            row("A", "__PARENT__", true),
+            row("A", "1", false),
+            row("B", "2", false),
+            row("B", "3", false),
+        ];
+        let mut selected = vec![0, 1];
+
+        selection_after_a_click_release(&mut items, &mut selected);
+
+        assert_every_component_sits_under_its_own_header(&items);
+        assert_eq!(selected, vec![0, 1]);
+        assert!(items[0].is_parent);
+        assert!(!items[0].parent_placeholder);
+        let placeholder = items
+            .iter()
+            .find(|item| item.is_parent && item.parent_placeholder)
+            .expect("the left-behind components get a split header");
+        assert_eq!(placeholder.mod_name, "B");
     }
 
     fn stacked_visible_rows(n: usize) -> Vec<(usize, egui::Rect)> {

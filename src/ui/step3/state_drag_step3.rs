@@ -143,11 +143,43 @@ pub mod slots {
             .position(|idx| *idx == target_full)
             .unwrap_or(remaining_len)
     }
+
+    #[must_use]
+    pub fn pointer_to_visible_slot(
+        visible_rows: &[(usize, egui::Rect)],
+        block: &[usize],
+        grabbed: usize,
+        target_y: f32,
+    ) -> usize {
+        let n = visible_rows.len();
+        if n == 0 {
+            return 0;
+        }
+        let k = visible_rows
+            .iter()
+            .filter(|(idx, _)| block.contains(idx))
+            .count()
+            .max(1);
+        let desired_grabbed_row = visible_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, rect))| rect.top() <= target_y)
+            .map(|(i, _)| i)
+            .next_back()
+            .unwrap_or(0);
+        let rank = visible_rows
+            .iter()
+            .filter(|(idx, _)| block.contains(idx) && *idx < grabbed)
+            .count();
+        desired_grabbed_row
+            .saturating_sub(rank)
+            .min(n.saturating_sub(k))
+    }
 }
 
 pub use constraints::resolve_insert_at;
 pub use math::compute_desired_block_start;
-pub use slots::visible_slot_to_insert_at;
+pub use slots::{pointer_to_visible_slot, visible_slot_to_insert_at};
 
 #[cfg(test)]
 mod tests {
@@ -270,6 +302,78 @@ mod tests {
             assert_eq!(resolve_insert_at(&remaining, 6, &moving, &[]), 6);
             assert_eq!(resolve_insert_at(&remaining, 99, &moving, &[]), 6);
             assert_eq!(resolve_insert_at(&remaining, 3, &[], &[]), 3);
+        }
+    }
+
+    mod pointer_slot {
+        use eframe::egui;
+
+        use super::super::pointer_to_visible_slot;
+
+        fn stacked_rows(indices: &[usize]) -> Vec<(usize, egui::Rect)> {
+            indices
+                .iter()
+                .enumerate()
+                .map(|(slot, idx)| {
+                    let top = f32::from(u16::try_from(slot).unwrap_or(u16::MAX)) * 24.0;
+                    (
+                        *idx,
+                        egui::Rect::from_min_size(egui::pos2(0.0, top), egui::vec2(400.0, 24.0)),
+                    )
+                })
+                .collect()
+        }
+
+        fn six_collapsed_headers() -> Vec<(usize, egui::Rect)> {
+            stacked_rows(&[0, 11, 22, 33, 44, 55])
+        }
+
+        fn c_d_e_block() -> Vec<usize> {
+            (22..=54).collect()
+        }
+
+        #[test]
+        fn grabbing_a_lower_collapsed_header_keeps_the_slab_where_it_is() {
+            let visible_rows = six_collapsed_headers();
+            let block = c_d_e_block();
+
+            let slot =
+                pointer_to_visible_slot(&visible_rows, &block, 33, 3.0f32.mul_add(24.0, 5.0));
+
+            assert_eq!(slot, 2);
+        }
+
+        #[test]
+        fn one_visible_row_down_moves_the_slab_one_slot() {
+            let visible_rows = six_collapsed_headers();
+            let block: Vec<usize> = (22..=43).collect();
+
+            let slot =
+                pointer_to_visible_slot(&visible_rows, &block, 33, 4.0f32.mul_add(24.0, 5.0));
+
+            assert_eq!(slot, 3);
+        }
+
+        #[test]
+        fn the_slot_is_clamped_to_the_list() {
+            let visible_rows = six_collapsed_headers();
+            let block = c_d_e_block();
+
+            let above = pointer_to_visible_slot(&visible_rows, &block, 33, -1000.0);
+            let below = pointer_to_visible_slot(&visible_rows, &block, 33, 1000.0);
+
+            assert_eq!(above, 0);
+            assert_eq!(below, 3);
+        }
+
+        #[test]
+        fn expanded_rows_count_one_each() {
+            let visible_rows = stacked_rows(&[0, 1, 2, 3, 4]);
+            let block = vec![2, 3];
+
+            let slot = pointer_to_visible_slot(&visible_rows, &block, 3, 3.0f32.mul_add(24.0, 5.0));
+
+            assert_eq!(slot, 2);
         }
     }
 }
