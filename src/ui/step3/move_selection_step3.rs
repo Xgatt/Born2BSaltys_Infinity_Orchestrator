@@ -30,7 +30,12 @@ pub(crate) struct MoveSelectionContext<'a> {
     pub redo_stack: &'a mut Vec<Vec<Step3ItemState>>,
 }
 
-fn moving_set(items: &[Step3ItemState], selected: &[usize], clicked_idx: usize) -> Vec<usize> {
+#[must_use]
+pub(crate) fn moving_set(
+    items: &[Step3ItemState],
+    selected: &[usize],
+    clicked_idx: usize,
+) -> Vec<usize> {
     let operands: Vec<usize> = if selected.contains(&clicked_idx) {
         selected
             .iter()
@@ -75,7 +80,12 @@ fn moving_set(items: &[Step3ItemState], selected: &[usize], clicked_idx: usize) 
     moving
 }
 
-fn is_locked(items: &[Step3ItemState], moving: &[usize], locked_blocks: &[String]) -> bool {
+#[must_use]
+pub(crate) fn is_locked(
+    items: &[Step3ItemState],
+    moving: &[usize],
+    locked_blocks: &[String],
+) -> bool {
     moving
         .iter()
         .any(|idx| locked_blocks.contains(&items[*idx].block_id))

@@ -21,13 +21,11 @@ use crate::ui::shared::redesign_tokens::{
     redesign_warning, redesign_with_alpha,
 };
 use crate::ui::shared::typography_global::{SIZE_PILL_TEXT, strong};
-use crate::ui::step3::block_selection_step3::{
-    selected_full_main_parent_block_indices, single_child_main_parent_block_indices,
-};
 use crate::ui::step3::blocks;
 use crate::ui::step3::format_step3;
 use crate::ui::step3::move_selection_step3::{
-    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget, move_selection,
+    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget, is_locked, move_selection,
+    moving_set,
 };
 use crate::ui::step3::service_step3;
 use crate::ui::step3::state_step3;
@@ -89,6 +87,7 @@ struct RowAccumulator {
         crate::app::compat_issue::CompatIssue,
     )>,
     move_request: Option<(usize, MoveSelectionTarget)>,
+    drag_refused_locked: bool,
 }
 
 impl RowAccumulator {
@@ -100,6 +99,7 @@ impl RowAccumulator {
             open_prompt_popup: None,
             open_compat_popup: None,
             move_request: None,
+            drag_refused_locked: false,
         }
     }
 }
@@ -476,7 +476,11 @@ fn render_header_row(
     acc.visible_rows.push((idx, label_response.rect));
     handle_jump_to_selected(ui, ctx, idx, label_response.rect);
     handle_row_selection(ui, ctx, idx, &label_response, &drag_response);
-    handle_drag_start(ui, ctx, idx, &drag_response, &acc.visible_rows);
+    if handle_drag_start(ui, ctx, idx, &drag_response, &acc.visible_rows)
+        == DragStart::RefusedLocked
+    {
+        acc.drag_refused_locked = true;
+    }
 }
 
 fn paint_lock_button(ui: &mut egui::Ui, is_locked: bool, color: egui::Color32) -> egui::Response {
@@ -605,7 +609,11 @@ fn render_child_row(
     acc.visible_rows.push((idx, label_response.rect));
     handle_jump_to_selected(ui, ctx, idx, label_response.rect);
     handle_row_selection(ui, ctx, idx, &label_response, &drag_response);
-    handle_drag_start(ui, ctx, idx, &drag_response, &acc.visible_rows);
+    if handle_drag_start(ui, ctx, idx, &drag_response, &acc.visible_rows)
+        == DragStart::RefusedLocked
+    {
+        acc.drag_refused_locked = true;
+    }
 
     row_right
 }
@@ -960,42 +968,34 @@ fn handle_drag_start(
     idx: usize,
     drag_response: &egui::Response,
     visible_rows: &[(usize, egui::Rect)],
-) {
+) -> DragStart {
     if !drag_response.drag_started() {
-        return;
+        return DragStart::NotStarted;
     }
-    if ctx.locked_blocks.contains(&ctx.items[idx].block_id) {
+    let moving = moving_set(ctx.items, ctx.selected, idx);
+    if is_locked(ctx.items, &moving, ctx.locked_blocks) {
         *ctx.drag_from = None;
         ctx.drag_indices.clear();
-        return;
+        return DragStart::RefusedLocked;
     }
     step3_history::push_undo_snapshot(ctx.items, ctx.undo_stack, ctx.redo_stack);
     *ctx.drag_from = Some(idx);
-    update_drag_indices(ctx, idx);
+    if !ctx.selected.contains(&idx) {
+        ctx.selected.clear();
+        ctx.selected.push(idx);
+    }
+    *ctx.drag_indices = moving;
     update_drag_grab_geometry(ui, ctx, idx, visible_rows);
     *ctx.last_insert_at = None;
     *ctx.drag_over = Some(idx + 1);
+    DragStart::Started
 }
 
-fn update_drag_indices(ctx: &mut RenderCtx<'_>, idx: usize) {
-    if let Some(block_indices) =
-        selected_full_main_parent_block_indices(ctx.items, ctx.selected, idx)
-    {
-        *ctx.drag_indices = block_indices;
-    } else if ctx.items[idx].is_parent {
-        *ctx.drag_indices = blocks::block_indices(ctx.items, idx);
-    } else if ctx.selected.contains(&idx) && ctx.selected.len() > 1 {
-        ctx.drag_indices.clone_from(ctx.selected);
-    } else if let Some(block_indices) = single_child_main_parent_block_indices(ctx.items, idx) {
-        ctx.selected.clear();
-        ctx.selected.push(idx);
-        *ctx.drag_indices = block_indices;
-    } else {
-        ctx.selected.clear();
-        ctx.selected.push(idx);
-        ctx.drag_indices.clear();
-        ctx.drag_indices.push(idx);
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DragStart {
+    NotStarted,
+    Started,
+    RefusedLocked,
 }
 
 fn update_drag_grab_geometry(
@@ -1094,7 +1094,11 @@ fn flush_row_outcome(
     if !acc.prompt_requests.is_empty() {
         service_step3::prompt_actions::apply_prompt_actions(state, &acc.prompt_requests);
     }
-    let (clicked_idx, target) = acc.move_request.take()?;
+    let Some((clicked_idx, target)) = acc.move_request.take() else {
+        return acc
+            .drag_refused_locked
+            .then_some(MoveSelectionOutcome::RefusedLocked);
+    };
     let (
         items,
         selected,

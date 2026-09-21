@@ -71,7 +71,27 @@ fn range_selection(
             out.extend(block);
         }
     }
+    out.extend(headers_of_fully_selected_mods(items, &out));
     out
+}
+
+fn headers_of_fully_selected_mods(items: &[Step3ItemState], chosen_rows: &[usize]) -> Vec<usize> {
+    let chosen: HashSet<usize> = chosen_rows.iter().copied().collect();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(row, item)| item.is_parent && !chosen.contains(row))
+        .filter_map(|(row, _)| {
+            let block = blocks::block_indices(items, row);
+            let mut children = block
+                .iter()
+                .copied()
+                .filter(|member| *member != row)
+                .peekable();
+            let has_children = children.peek().is_some();
+            (has_children && children.all(|child| chosen.contains(&child))).then_some(row)
+        })
+        .collect()
 }
 
 pub mod component_uncheck {
@@ -106,6 +126,7 @@ mod tests {
         mac_cmd: false,
         command: false,
     };
+    const PLAIN: egui::Modifiers = egui::Modifiers::NONE;
 
     fn row(mod_name: &str, component_id: &str, is_parent: bool) -> Step3ItemState {
         Step3ItemState {
@@ -123,260 +144,215 @@ mod tests {
         }
     }
 
-    fn three_mods_of_two() -> Vec<Step3ItemState> {
+    fn three_mods_of_three() -> Vec<Step3ItemState> {
         let mut items = Vec::new();
         for mod_name in ["A", "B", "C"] {
             items.push(row(mod_name, "__PARENT__", true));
             items.push(row(mod_name, "1", false));
             items.push(row(mod_name, "2", false));
+            items.push(row(mod_name, "3", false));
         }
         items
     }
 
     fn every_row_visible() -> Vec<usize> {
-        (0..9).collect()
+        (0..12).collect()
     }
 
     fn with_mod_b_collapsed() -> Vec<usize> {
-        vec![0, 1, 2, 3, 6, 7, 8]
+        vec![0, 1, 2, 3, 4, 8, 9, 10, 11]
     }
 
     #[test]
     fn shift_click_across_mods_takes_the_components_and_only_fully_covered_headers() {
-        let items = three_mods_of_two();
-        let mut selected = vec![2];
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![2];
         let mut anchor = Some(2);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            7,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 9, SHIFT);
 
-        assert_eq!(selected, vec![2, 3, 4, 5, 7]);
+        assert_eq!(selected, vec![2, 3, 4, 5, 6, 7, 9]);
         assert_eq!(anchor, Some(2));
     }
 
     #[test]
     fn shift_click_upward_selects_the_same_rows() {
-        let items = three_mods_of_two();
-        let mut selected = vec![7];
-        let mut anchor = Some(7);
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![9];
+        let mut anchor = Some(9);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            2,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 2, SHIFT);
 
-        assert_eq!(selected, vec![2, 3, 4, 5, 7]);
-        assert_eq!(anchor, Some(7));
+        assert_eq!(selected, vec![2, 3, 4, 5, 6, 7, 9]);
+        assert_eq!(anchor, Some(9));
     }
 
     #[test]
-    fn shift_click_inside_one_mod_selects_that_run_without_its_header() {
-        let items = three_mods_of_two();
-        let mut selected = vec![1];
+    fn part_of_one_mod_is_selected_without_its_header() {
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![1];
         let mut anchor = Some(1);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            2,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 2, SHIFT);
 
         assert_eq!(selected, vec![1, 2]);
     }
 
     #[test]
-    fn a_collapsed_mod_inside_the_range_is_taken_whole_with_its_hidden_components() {
-        let items = three_mods_of_two();
-        let mut selected = vec![1];
+    fn every_component_of_a_mod_takes_its_header_even_outside_the_range() {
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![1];
         let mut anchor = Some(1);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &with_mod_b_collapsed(),
-            7,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 3, SHIFT);
 
-        assert_eq!(selected, vec![1, 2, 3, 4, 5, 7]);
+        assert_eq!(selected, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_range_from_a_mods_first_component_takes_that_mods_header_too() {
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![1];
+        let mut anchor = Some(1);
+
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 7, SHIFT);
+
+        assert_eq!(selected, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn a_collapsed_mod_inside_the_range_is_taken_whole_with_its_hidden_components() {
+        let items = three_mods_of_three();
+        let visible = with_mod_b_collapsed();
+        let mut selected: Vec<usize> = vec![2];
+        let mut anchor = Some(2);
+
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 9, SHIFT);
+
+        assert_eq!(selected, vec![2, 3, 4, 5, 6, 7, 9]);
     }
 
     #[test]
     fn shift_clicking_a_header_takes_that_whole_mod() {
-        let items = three_mods_of_two();
-        let mut selected = vec![2];
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![2];
         let mut anchor = Some(2);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            6,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 8, SHIFT);
 
-        assert_eq!(selected, vec![2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(selected, vec![2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    }
+
+    #[test]
+    fn a_header_anchor_takes_its_whole_mod_into_the_range() {
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![4];
+        let mut anchor = Some(4);
+
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 9, SHIFT);
+
+        assert_eq!(selected, vec![4, 5, 6, 7, 9]);
     }
 
     #[test]
     fn a_second_shift_click_replaces_the_range_from_the_same_anchor() {
-        let items = three_mods_of_two();
-        let mut selected = vec![2];
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![2];
         let mut anchor = Some(2);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            7,
-            SHIFT,
-        );
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            4,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 9, SHIFT);
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 5, SHIFT);
 
-        assert_eq!(selected, vec![2, 4]);
+        assert_eq!(selected, vec![2, 3, 5]);
         assert_eq!(anchor, Some(2));
     }
 
     #[test]
     fn a_first_shift_click_sets_the_anchor_so_the_next_one_makes_a_range() {
-        let items = three_mods_of_two();
-        let mut selected = Vec::new();
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![];
         let mut anchor = None;
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            5,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 5, SHIFT);
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 9, SHIFT);
 
-        assert_eq!(selected, vec![5]);
+        assert_eq!(selected, vec![4, 5, 6, 7, 9]);
         assert_eq!(anchor, Some(5));
-
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            7,
-            SHIFT,
-        );
-
-        assert_eq!(selected, vec![5, 7]);
-    }
-
-    #[test]
-    fn a_header_anchor_takes_its_whole_mod_into_the_range() {
-        let items = three_mods_of_two();
-        let mut selected = vec![3];
-        let mut anchor = Some(3);
-
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            7,
-            SHIFT,
-        );
-
-        assert_eq!(selected, vec![3, 4, 5, 7]);
     }
 
     #[test]
     fn shift_click_from_a_hidden_anchor_selects_the_clicked_row() {
-        let items = three_mods_of_two();
-        let mut selected = vec![4];
-        let mut anchor = Some(4);
+        let items = three_mods_of_three();
+        let visible = with_mod_b_collapsed();
+        let mut selected: Vec<usize> = vec![5];
+        let mut anchor = Some(5);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &with_mod_b_collapsed(),
-            7,
-            SHIFT,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 9, SHIFT);
 
-        assert_eq!(selected, vec![7]);
+        assert_eq!(selected, vec![9]);
     }
 
     #[test]
     fn ctrl_click_after_a_range_adds_and_removes_single_rows() {
-        let items = three_mods_of_two();
-        let mut selected = vec![2];
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![2];
         let mut anchor = Some(2);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            4,
-            SHIFT,
-        );
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            8,
-            CTRL,
-        );
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            4,
-            CTRL,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 5, SHIFT);
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 11, CTRL);
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 5, CTRL);
 
-        assert_eq!(selected, vec![2, 8]);
-        assert_eq!(anchor, Some(4));
+        assert_eq!(selected, vec![2, 3, 11]);
+        assert_eq!(anchor, Some(5));
     }
 
     #[test]
     fn plain_click_replaces_the_selection_and_moves_the_anchor() {
-        let items = three_mods_of_two();
-        let mut selected = vec![1, 2, 3];
+        let items = three_mods_of_three();
+        let visible = every_row_visible();
+        let mut selected: Vec<usize> = vec![1, 2, 3];
         let mut anchor = Some(1);
 
-        apply_row_selection(
-            &mut selected,
-            &mut anchor,
-            &items,
-            &every_row_visible(),
-            6,
-            egui::Modifiers::NONE,
-        );
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, 6, PLAIN);
 
         assert_eq!(selected, vec![6]);
         assert_eq!(anchor, Some(6));
+    }
+
+    #[test]
+    fn grabbing_a_covered_header_moves_everything_that_is_highlighted() {
+        let mut items = Vec::new();
+        items.push(row("Mod1", "__PARENT__", true));
+        for component in ["1", "2", "3", "4"] {
+            items.push(row("Mod1", component, false));
+        }
+        for mod_name in ["Mod2", "Mod3"] {
+            items.push(row(mod_name, "__PARENT__", true));
+            items.push(row(mod_name, "1", false));
+            items.push(row(mod_name, "2", false));
+        }
+        let visible: Vec<usize> = (0..items.len()).collect();
+        let mod1_c3 = 3;
+        let mod2_header = 5;
+        let mod3_c2 = 10;
+        let mut selected: Vec<usize> = vec![mod1_c3];
+        let mut anchor = Some(mod1_c3);
+
+        apply_row_selection(&mut selected, &mut anchor, &items, &visible, mod3_c2, SHIFT);
+
+        assert_eq!(selected, vec![3, 4, 5, 6, 7, 8, 9, 10]);
+        let dragged =
+            crate::ui::step3::move_selection_step3::moving_set(&items, &selected, mod2_header);
+        assert_eq!(dragged, vec![3, 4, 5, 6, 7, 8, 9, 10]);
     }
 }
