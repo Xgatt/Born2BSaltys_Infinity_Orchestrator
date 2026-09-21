@@ -15,8 +15,9 @@ pub(crate) use crate::ui::orchestrator::widgets::help_copy::HelpPage;
 const WRENCH_SIZE: f32 = 22.0;
 const CIRCLE_RADIUS: f32 = 9.5;
 const CIRCLE_STROKE_W: f32 = 1.4;
-const HANDLE_STROKE_W: f32 = 2.2;
-const HEAD_RADIUS: f32 = 3.0;
+const HANDLE_STROKE_W: f32 = 2.8;
+const HEAD_RADIUS: f32 = 4.1;
+const JAW_SLOT_W: f32 = 2.7;
 const POPOVER_MAX_WIDTH: f32 = 380.0;
 const POPOVER_TEXT_WIDTH: f32 = 340.0;
 const POPOVER_BOTTOM_MARGIN: f32 = 40.0;
@@ -125,24 +126,18 @@ fn paint_wrench_glyph(
         std::f32::consts::FRAC_1_SQRT_2,
         -std::f32::consts::FRAC_1_SQRT_2,
     );
-    let perp = egui::vec2(-diag.y, diag.x);
-    let handle_start = center - diag * 5.0;
-    let head_center = center + diag * 4.0;
-    let handle_end = head_center - diag * 1.0;
+    let handle_start = center - diag * 5.2;
+    let head_center = center + diag * 3.0;
 
     painter.line_segment(
-        [handle_start, handle_end],
+        [handle_start, head_center],
         egui::Stroke::new(HANDLE_STROKE_W, color),
     );
-    painter.circle_stroke(
-        head_center,
-        HEAD_RADIUS,
-        egui::Stroke::new(CIRCLE_STROKE_W, color),
-    );
-    let notch_center = head_center + diag * HEAD_RADIUS;
+    painter.circle_filled(handle_start, HANDLE_STROKE_W / 2.0, color);
+    painter.circle_filled(head_center, HEAD_RADIUS, color);
     painter.line_segment(
-        [notch_center - perp * 2.0, notch_center + perp * 2.0],
-        egui::Stroke::new(2.0_f32, bg),
+        [center + diag * 3.4, center + diag * 8.0],
+        egui::Stroke::new(JAW_SLOT_W, bg),
     );
 }
 
