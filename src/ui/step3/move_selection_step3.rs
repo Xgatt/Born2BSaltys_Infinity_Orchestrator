@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use crate::app::state::Step3ItemState;
-use crate::app::step3_history;
+use crate::app::step3_history::{self, Step3HistoryEntry, Step3TouchedRows};
 use crate::ui::step3::blocks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,8 +27,8 @@ pub(crate) struct MoveSelectionContext<'a> {
     pub clone_seq: &'a mut usize,
     pub locked_blocks: &'a [String],
     pub collapsed_blocks: &'a [String],
-    pub undo_stack: &'a mut Vec<Vec<Step3ItemState>>,
-    pub redo_stack: &'a mut Vec<Vec<Step3ItemState>>,
+    pub undo_stack: &'a mut Vec<Step3HistoryEntry>,
+    pub redo_stack: &'a mut Vec<Step3HistoryEntry>,
 }
 
 #[must_use]
@@ -130,24 +130,19 @@ fn already_at_target(len: usize, moving: &[usize], target: MoveSelectionTarget) 
     moving == expected.as_slice()
 }
 
-struct MovingIdentities {
-    child_keys: HashSet<String>,
-    parent_block_ids: HashSet<String>,
-}
-
-fn capture_identities(items: &[Step3ItemState], moving: &[usize]) -> MovingIdentities {
-    let mut child_keys = HashSet::new();
-    let mut parent_block_ids = HashSet::new();
+pub(crate) fn capture_identities(items: &[Step3ItemState], moving: &[usize]) -> Step3TouchedRows {
+    let mut component_keys = HashSet::new();
+    let mut header_blocks = HashSet::new();
     for item in moving.iter().filter_map(|idx| items.get(*idx)) {
         if item.is_parent {
-            parent_block_ids.insert(item.block_id.clone());
+            header_blocks.insert(item.block_id.clone());
         } else {
-            child_keys.insert(blocks::step3_item_key(item));
+            component_keys.insert(blocks::step3_item_key(item));
         }
     }
-    MovingIdentities {
-        child_keys,
-        parent_block_ids,
+    Step3TouchedRows {
+        component_keys,
+        header_blocks,
     }
 }
 
@@ -174,16 +169,16 @@ fn rebuild_items(items: &mut Vec<Step3ItemState>, moving: &[usize], target: Move
     };
 }
 
-fn recompute_selection(items: &[Step3ItemState], identities: &MovingIdentities) -> Vec<usize> {
+fn recompute_selection(items: &[Step3ItemState], touched: &Step3TouchedRows) -> Vec<usize> {
     let mut selected: Vec<usize> = items
         .iter()
         .enumerate()
         .filter_map(|(idx, item)| {
             let matches = if item.is_parent {
-                identities.parent_block_ids.contains(&item.block_id)
+                touched.header_blocks.contains(&item.block_id)
             } else {
-                identities
-                    .child_keys
+                touched
+                    .component_keys
                     .contains(&blocks::step3_item_key(item))
             };
             matches.then_some(idx)
@@ -194,15 +189,18 @@ fn recompute_selection(items: &[Step3ItemState], identities: &MovingIdentities) 
     selected
 }
 
-pub(crate) fn keep_selection_across(
+pub(crate) fn restore_selection_after_history(
     items: &mut Vec<Step3ItemState>,
     selected: &mut Vec<usize>,
     anchor: &mut Option<usize>,
-    change: impl FnOnce(&mut Vec<Step3ItemState>),
+    change: impl FnOnce(&mut Vec<Step3ItemState>) -> Option<Step3TouchedRows>,
 ) {
-    let identities = capture_identities(items, selected);
-    change(items);
-    *selected = recompute_selection(items, &identities);
+    let current = capture_identities(items, selected);
+    let returned = change(items);
+    let rows = returned
+        .filter(|touched| !touched.is_empty())
+        .unwrap_or(current);
+    *selected = recompute_selection(items, &rows);
     *anchor = selected.first().copied();
 }
 
@@ -225,9 +223,13 @@ pub(crate) fn move_selection(
         return MoveSelectionOutcome::NothingToMove;
     }
 
-    step3_history::push_undo_snapshot(ctx.items, ctx.undo_stack, ctx.redo_stack);
-
     let identities = capture_identities(ctx.items, &moving);
+    step3_history::push_undo_snapshot(
+        ctx.items,
+        identities.clone(),
+        ctx.undo_stack,
+        ctx.redo_stack,
+    );
 
     rebuild_items(ctx.items, &moving, target);
 
@@ -297,13 +299,13 @@ mod tests {
         target: MoveSelectionTarget,
     ) -> (
         MoveSelectionOutcome,
-        Vec<Vec<Step3ItemState>>,
-        Vec<Vec<Step3ItemState>>,
+        Vec<Step3HistoryEntry>,
+        Vec<Step3HistoryEntry>,
     ) {
         let mut anchor: Option<usize> = None;
         let mut clone_seq = 0usize;
-        let mut undo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
-        let mut redo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
+        let mut undo_stack: Vec<Step3HistoryEntry> = Vec::new();
+        let mut redo_stack: Vec<Step3HistoryEntry> = Vec::new();
         let outcome = {
             let mut ctx = MoveSelectionContext {
                 items,
@@ -558,8 +560,11 @@ mod tests {
         let mut selected = vec![2, 3];
         let mut anchor: Option<usize> = None;
         let mut clone_seq = 0usize;
-        let mut undo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
-        let mut redo_stack: Vec<Vec<Step3ItemState>> = vec![before.clone()];
+        let mut undo_stack: Vec<Step3HistoryEntry> = Vec::new();
+        let mut redo_stack: Vec<Step3HistoryEntry> = vec![Step3HistoryEntry {
+            items: before.clone(),
+            touched: Step3TouchedRows::default(),
+        }];
         let outcome = {
             let mut ctx = MoveSelectionContext {
                 items: &mut items,
@@ -575,7 +580,7 @@ mod tests {
         };
         assert_eq!(outcome, MoveSelectionOutcome::Moved);
         assert_eq!(undo_stack.len(), 1);
-        assert_eq!(undo_stack[0], before);
+        assert_eq!(undo_stack[0].items, before);
         assert!(redo_stack.is_empty());
     }
 
@@ -733,5 +738,27 @@ mod tests {
             vec![2, 3, 4, 5, 6, 7]
         );
         assert_eq!(moving_set(&items, &components_only, &[], 0), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn a_move_records_the_rows_it_moved() {
+        let mut items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+        ];
+        let mut selected = vec![3];
+        let (outcome, undo_stack, _) =
+            run(&mut items, &mut selected, &[], 2, MoveSelectionTarget::Top);
+        assert_eq!(outcome, MoveSelectionOutcome::Moved);
+        let entry = undo_stack.last().expect("a snapshot was pushed");
+        let expected_keys: HashSet<String> =
+            vec![blocks::step3_item_key(&child("B", "B::b0", "1", 2))]
+                .into_iter()
+                .collect();
+        let expected_headers: HashSet<String> = vec!["B::b0".to_string()].into_iter().collect();
+        assert_eq!(entry.touched.component_keys, expected_keys);
+        assert_eq!(entry.touched.header_blocks, expected_headers);
     }
 }

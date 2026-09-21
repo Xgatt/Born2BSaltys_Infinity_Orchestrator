@@ -6,7 +6,7 @@ pub(crate) use crate::app::step3_toolbar::{
 };
 
 use crate::app::state::WizardState;
-use crate::ui::step3::move_selection_step3::keep_selection_across;
+use crate::ui::step3::move_selection_step3::restore_selection_after_history;
 use crate::ui::step5::service_diagnostics_support_step5::export_diagnostics;
 
 pub(crate) fn export_diagnostics_from_step3(
@@ -43,16 +43,16 @@ pub(crate) fn collapse_all_active(state: &mut WizardState) {
 pub(crate) fn redo_active(state: &mut WizardState) {
     let (items, selected, _, _, _, anchor, _, _, _, _, _, _, _, undo_stack, redo_stack) =
         crate::ui::step3::state_step3::active_list_mut(state);
-    keep_selection_across(items, selected, anchor, |items| {
-        crate::app::step3_history::redo(items, undo_stack, redo_stack);
+    restore_selection_after_history(items, selected, anchor, |items| {
+        crate::app::step3_history::redo(items, undo_stack, redo_stack)
     });
 }
 
 pub(crate) fn undo_active(state: &mut WizardState) {
     let (items, selected, _, _, _, anchor, _, _, _, _, _, _, _, undo_stack, redo_stack) =
         crate::ui::step3::state_step3::active_list_mut(state);
-    keep_selection_across(items, selected, anchor, |items| {
-        crate::app::step3_history::undo(items, undo_stack, redo_stack);
+    restore_selection_after_history(items, selected, anchor, |items| {
+        crate::app::step3_history::undo(items, undo_stack, redo_stack)
     });
 }
 
@@ -60,7 +60,8 @@ pub(crate) fn undo_active(state: &mut WizardState) {
 mod tests {
     use super::{collapse_all_active, expand_all_active, redo_active, undo_active};
     use crate::app::state::{Step3ItemState, WizardState};
-    use crate::app::step3_history;
+    use crate::app::step3_history::{self, Step3TouchedRows};
+    use crate::ui::step3::move_selection_step3::capture_identities;
     use crate::ui::step3::state_step3::active_list_mut;
 
     fn row(mod_name: &str, component_id: &str, is_parent: bool) -> Step3ItemState {
@@ -117,21 +118,72 @@ mod tests {
         assert_eq!(selection_and_anchor(&mut state), (Vec::new(), None));
     }
 
+    fn state_with_three_one_component_mods() -> WizardState {
+        let mut state = WizardState::default();
+        let (items, ..) = active_list_mut(&mut state);
+        *items = vec![
+            row("A", "__PARENT__", true),
+            row("A", "1", false),
+            row("B", "__PARENT__", true),
+            row("B", "1", false),
+            row("C", "__PARENT__", true),
+            row("C", "1", false),
+        ];
+        state
+    }
+
     #[test]
-    fn undo_and_redo_keep_the_same_rows_selected() {
-        let mut state = state_with_two_mods_and_a_selection(&[2, 3, 4]);
+    fn undo_and_redo_light_the_rows_each_step_moved() {
+        let mut state = state_with_three_one_component_mods();
         {
-            let (items, selected, .., undo_stack, redo_stack) = active_list_mut(&mut state);
-            step3_history::push_undo_snapshot(items, undo_stack, redo_stack);
-            let mod_b: Vec<Step3ItemState> = items.drain(2..).collect();
-            items.splice(0..0, mod_b);
-            *selected = vec![0, 1, 2];
+            let (items, .., undo_stack, redo_stack) = active_list_mut(&mut state);
+            let a_touched = capture_identities(items, &[0, 1]);
+            step3_history::push_undo_snapshot(items, a_touched, undo_stack, redo_stack);
+            let mod_a: Vec<Step3ItemState> = items.drain(0..2).collect();
+            items.extend(mod_a);
+        }
+        {
+            let (items, .., undo_stack, redo_stack) = active_list_mut(&mut state);
+            let c_touched = capture_identities(items, &[2, 3]);
+            step3_history::push_undo_snapshot(items, c_touched, undo_stack, redo_stack);
+            let mod_c: Vec<Step3ItemState> = items.drain(2..4).collect();
+            items.splice(0..0, mod_c);
+        }
+        {
+            let (_, selected, _, _, _, anchor, ..) = active_list_mut(&mut state);
+            *selected = vec![0, 1];
+            *anchor = Some(0);
         }
 
         undo_active(&mut state);
-        assert_eq!(selection_and_anchor(&mut state), (vec![2, 3, 4], Some(2)));
+        assert_eq!(selection_and_anchor(&mut state), (vec![2, 3], Some(2)));
+
+        undo_active(&mut state);
+        assert_eq!(selection_and_anchor(&mut state), (vec![0, 1], Some(0)));
 
         redo_active(&mut state);
-        assert_eq!(selection_and_anchor(&mut state), (vec![0, 1, 2], Some(0)));
+        assert_eq!(selection_and_anchor(&mut state), (vec![4, 5], Some(4)));
+
+        redo_active(&mut state);
+        assert_eq!(selection_and_anchor(&mut state), (vec![0, 1], Some(0)));
+    }
+
+    #[test]
+    fn a_step_that_moved_nothing_keeps_the_same_rows_selected() {
+        let mut state = state_with_two_mods_and_a_selection(&[]);
+        {
+            let (items, selected, .., undo_stack, redo_stack) = active_list_mut(&mut state);
+            step3_history::push_undo_snapshot(
+                items,
+                Step3TouchedRows::default(),
+                undo_stack,
+                redo_stack,
+            );
+            items.insert(0, row("Z", "__PARENT__", true));
+            *selected = vec![4];
+        }
+
+        undo_active(&mut state);
+        assert_eq!(selection_and_anchor(&mut state), (vec![3], Some(3)));
     }
 }

@@ -9,7 +9,7 @@ use crate::app::prompt_eval_context::build_prompt_eval_context;
 use crate::app::prompt_eval_summary_step3;
 use crate::app::prompt_popup_text::format_step3_prompt_popup;
 use crate::app::state::{Step2Selection, Step3ItemState, WizardState};
-use crate::app::step3_history;
+use crate::app::step3_history::{self, Step3HistoryEntry, Step3TouchedRows};
 use crate::app::step3_prompt_edit::PromptActionRequest;
 use crate::parser::prompt_eval_expr::PromptEvalContext;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
@@ -24,7 +24,7 @@ use crate::ui::shared::typography_global::{SIZE_PILL_TEXT, strong};
 use crate::ui::step3::blocks;
 use crate::ui::step3::format_step3;
 use crate::ui::step3::move_selection_step3::{
-    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget,
+    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget, capture_identities,
     header_of_a_fully_selected_mod, is_locked, move_selection, moving_set,
 };
 use crate::ui::step3::service_step3;
@@ -70,8 +70,8 @@ struct RenderCtx<'a> {
     collapsed_blocks: &'a mut Vec<String>,
     clone_seq: &'a mut usize,
     locked_blocks: &'a mut Vec<String>,
-    undo_stack: &'a mut Vec<Vec<Step3ItemState>>,
-    redo_stack: &'a mut Vec<Vec<Step3ItemState>>,
+    undo_stack: &'a mut Vec<Step3HistoryEntry>,
+    redo_stack: &'a mut Vec<Step3HistoryEntry>,
     current_group_x_bounds: Option<(f32, f32)>,
 }
 
@@ -889,7 +889,12 @@ fn render_parent_context_menu(
     drag_response.context_menu(|ui| {
         render_move_selection_entries(ui, idx, acc);
         if ui.button("Clone Parent (empty split target)").clicked() {
-            step3_history::push_undo_snapshot(ctx.items, ctx.undo_stack, ctx.redo_stack);
+            step3_history::push_undo_snapshot(
+                ctx.items,
+                Step3TouchedRows::default(),
+                ctx.undo_stack,
+                ctx.redo_stack,
+            );
             blocks::clone_parent_empty_block(ctx.items, idx, ctx.clone_seq);
             ui.close_menu();
         }
@@ -980,7 +985,12 @@ fn handle_drag_start(
         ctx.drag_indices.clear();
         return DragStart::RefusedLocked;
     }
-    step3_history::push_undo_snapshot(ctx.items, ctx.undo_stack, ctx.redo_stack);
+    step3_history::push_undo_snapshot(
+        ctx.items,
+        capture_identities(ctx.items, &moving),
+        ctx.undo_stack,
+        ctx.redo_stack,
+    );
     *ctx.drag_from = Some(idx);
     if !ctx.selected.contains(&idx) {
         if header_of_a_fully_selected_mod(ctx.items, ctx.selected, idx) {
@@ -1342,11 +1352,16 @@ mod tests {
     #[test]
     fn undo_snapshot_records_state() {
         let items = vec![mod_item("ModA"), child_item("ModA", "1", "Component One")];
-        let mut undo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
-        let mut redo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
-        step3_history::push_undo_snapshot(&items, &mut undo_stack, &mut redo_stack);
+        let mut undo_stack: Vec<Step3HistoryEntry> = Vec::new();
+        let mut redo_stack: Vec<Step3HistoryEntry> = Vec::new();
+        step3_history::push_undo_snapshot(
+            &items,
+            Step3TouchedRows::default(),
+            &mut undo_stack,
+            &mut redo_stack,
+        );
         assert_eq!(undo_stack.len(), 1);
-        assert_eq!(undo_stack[0].len(), 2);
+        assert_eq!(undo_stack[0].items.len(), 2);
         assert!(redo_stack.is_empty());
     }
 
@@ -1359,10 +1374,15 @@ mod tests {
             child_item("ModA", "3", "Component Three"),
         ];
         let mut items = original.clone();
-        let mut undo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
-        let mut redo_stack: Vec<Vec<Step3ItemState>> = Vec::new();
+        let mut undo_stack: Vec<Step3HistoryEntry> = Vec::new();
+        let mut redo_stack: Vec<Step3HistoryEntry> = Vec::new();
 
-        step3_history::push_undo_snapshot(&items, &mut undo_stack, &mut redo_stack);
+        step3_history::push_undo_snapshot(
+            &items,
+            Step3TouchedRows::default(),
+            &mut undo_stack,
+            &mut redo_stack,
+        );
         items.pop();
 
         step3_history::undo(&mut items, &mut undo_stack, &mut redo_stack);

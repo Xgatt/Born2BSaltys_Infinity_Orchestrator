@@ -18,8 +18,8 @@ pub type ActiveListMut<'a> = (
     &'a mut Vec<String>,
     &'a mut usize,
     &'a mut Vec<String>,
-    &'a mut Vec<Vec<Step3ItemState>>,
-    &'a mut Vec<Vec<Step3ItemState>>,
+    &'a mut Vec<crate::app::step3_history::Step3HistoryEntry>,
+    &'a mut Vec<crate::app::step3_history::Step3HistoryEntry>,
 );
 
 pub fn normalize_active_tab(state: &mut WizardState) {
