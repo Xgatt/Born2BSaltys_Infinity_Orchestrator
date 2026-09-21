@@ -36,7 +36,9 @@ pub(crate) fn moving_set(
     selected: &[usize],
     clicked_idx: usize,
 ) -> Vec<usize> {
-    let operands: Vec<usize> = if selected.contains(&clicked_idx) {
+    let operands: Vec<usize> = if selected.contains(&clicked_idx)
+        || header_of_a_fully_selected_mod(items, selected, clicked_idx)
+    {
         selected
             .iter()
             .copied()
@@ -78,6 +80,21 @@ pub(crate) fn moving_set(
     let mut moving: Vec<usize> = moving.into_iter().collect();
     moving.sort_unstable();
     moving
+}
+
+fn header_of_a_fully_selected_mod(
+    items: &[Step3ItemState],
+    selected: &[usize],
+    clicked_idx: usize,
+) -> bool {
+    if !items.get(clicked_idx).is_some_and(|item| item.is_parent) {
+        return false;
+    }
+    let mut children = blocks::block_indices(items, clicked_idx)
+        .into_iter()
+        .filter(|member| *member != clicked_idx)
+        .peekable();
+    children.peek().is_some() && children.all(|child| selected.contains(&child))
 }
 
 #[must_use]
@@ -561,5 +578,26 @@ mod tests {
             assert!(!item.is_parent);
             assert!(moved_keys.contains(&blocks::step3_item_key(item)));
         }
+    }
+
+    #[test]
+    fn grabbing_the_header_of_a_fully_selected_mod_carries_the_whole_selection() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            child("A", "A::b0", "2", 2),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 3),
+            parent("C", "C::b0"),
+            child("C", "C::b0", "1", 4),
+            child("C", "C::b0", "2", 5),
+        ];
+        let components_only = vec![2, 4, 6, 7];
+
+        assert_eq!(
+            moving_set(&items, &components_only, 3),
+            vec![2, 3, 4, 5, 6, 7]
+        );
+        assert_eq!(moving_set(&items, &components_only, 0), vec![0, 1, 2]);
     }
 }

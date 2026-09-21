@@ -64,6 +64,12 @@ pub(crate) fn finalize_on_release(ui: &egui::Ui, ctx: &mut DragFinalizeContext<'
         .filter(|item| !item.is_parent)
         .map(blocks::step3_item_key)
         .collect();
+    let selected_header_blocks: std::collections::HashSet<String> = selected
+        .iter()
+        .filter_map(|idx| items.get(*idx))
+        .filter(|item| item.is_parent)
+        .map(|item| item.block_id.clone())
+        .collect();
     *drag_from = None;
     *drag_over = None;
     drag_indices.clear();
@@ -74,20 +80,29 @@ pub(crate) fn finalize_on_release(ui: &egui::Ui, ctx: &mut DragFinalizeContext<'
     blocks::repair_orphan_children(items, selected, clone_seq);
     blocks::merge_adjacent_same_mod_blocks(items, selected);
     blocks::prune_empty_parent_blocks(items, selected);
-    if !selected_keys.is_empty() {
-        selected.clear();
-        for (idx, item) in items.iter().enumerate() {
-            if item.is_parent {
-                continue;
-            }
-            if selected_keys.contains(&blocks::step3_item_key(item)) {
-                selected.push(idx);
-            }
-        }
-        selected.sort_unstable();
-        selected.dedup();
+    if !selected_keys.is_empty() || !selected_header_blocks.is_empty() {
+        *selected = reselect_after_cleanup(items, &selected_keys, &selected_header_blocks);
     }
     had_drag
+}
+
+fn reselect_after_cleanup(
+    items: &[Step3ItemState],
+    selected_keys: &std::collections::HashSet<String>,
+    selected_header_blocks: &std::collections::HashSet<String>,
+) -> Vec<usize> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            if item.is_parent {
+                selected_header_blocks.contains(&item.block_id)
+            } else {
+                selected_keys.contains(&blocks::step3_item_key(item))
+            }
+        })
+        .map(|(idx, _)| idx)
+        .collect()
 }
 
 pub(crate) fn draw_insert_marker(
@@ -217,4 +232,120 @@ pub(crate) fn apply_live_reorder(ui: &egui::Ui, ctx: &mut LiveReorderContext<'_>
         *drag_from = Some(grabbed);
     }
     *last_insert_at = Some(insert_at);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DragFinalizeContext, finalize_on_release};
+    use crate::app::state::Step3ItemState;
+    use eframe::egui;
+
+    fn row(mod_name: &str, component_id: &str, is_parent: bool) -> Step3ItemState {
+        Step3ItemState {
+            tp_file: format!("{mod_name}.tp2"),
+            component_id: component_id.to_string(),
+            mod_name: mod_name.to_string(),
+            component_label: String::new(),
+            raw_line: String::new(),
+            prompt_summary: None,
+            prompt_events: Vec::new(),
+            selected_order: 0,
+            block_id: format!("{mod_name}::block0"),
+            is_parent,
+            parent_placeholder: false,
+        }
+    }
+
+    fn two_mods() -> Vec<Step3ItemState> {
+        vec![
+            row("A", "__PARENT__", true),
+            row("A", "1", false),
+            row("A", "2", false),
+            row("B", "__PARENT__", true),
+            row("B", "1", false),
+        ]
+    }
+
+    fn pointer_button(pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: egui::pos2(20.0, 20.0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn selection_after_a_click_release(items: &mut Vec<Step3ItemState>, selected: &mut Vec<usize>) {
+        let ctx = egui::Context::default();
+        let press = egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(egui::pos2(20.0, 20.0)),
+                pointer_button(true),
+            ],
+            ..Default::default()
+        };
+        let _ = ctx.run(press, |_| {});
+        let release = egui::RawInput {
+            events: vec![pointer_button(false)],
+            ..Default::default()
+        };
+        let mut finalized = false;
+        let _ = ctx.run(release, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut drag_from = None;
+                let mut drag_over = None;
+                let mut drag_indices = Vec::new();
+                let mut drag_grab_offset = 0.0;
+                let mut drag_grab_pos_in_block = 0;
+                let mut drag_row_h = 0.0;
+                let mut last_insert_at = None;
+                let mut clone_seq = 0;
+                let mut finalize_ctx = DragFinalizeContext {
+                    items: &mut *items,
+                    selected: &mut *selected,
+                    drag_from: &mut drag_from,
+                    drag_over: &mut drag_over,
+                    drag_indices: &mut drag_indices,
+                    drag_grab_offset: &mut drag_grab_offset,
+                    drag_grab_pos_in_block: &mut drag_grab_pos_in_block,
+                    drag_row_h: &mut drag_row_h,
+                    last_insert_at: &mut last_insert_at,
+                    clone_seq: &mut clone_seq,
+                };
+                finalize_on_release(ui, &mut finalize_ctx);
+                finalized = true;
+            });
+        });
+        assert!(finalized);
+    }
+
+    #[test]
+    fn a_click_release_keeps_selected_headers_selected() {
+        let mut items = two_mods();
+        let mut selected = vec![0, 1, 2, 3, 4];
+
+        selection_after_a_click_release(&mut items, &mut selected);
+
+        assert_eq!(selected, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_click_release_keeps_a_components_only_selection_as_it_was() {
+        let mut items = two_mods();
+        let mut selected = vec![2, 4];
+
+        selection_after_a_click_release(&mut items, &mut selected);
+
+        assert_eq!(selected, vec![2, 4]);
+    }
+
+    #[test]
+    fn a_click_release_keeps_a_header_only_selection() {
+        let mut items = two_mods();
+        let mut selected = vec![3];
+
+        selection_after_a_click_release(&mut items, &mut selected);
+
+        assert_eq!(selected, vec![3]);
+    }
 }
