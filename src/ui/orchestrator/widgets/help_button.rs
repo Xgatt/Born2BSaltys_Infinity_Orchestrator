@@ -18,13 +18,13 @@ const CIRCLE_STROKE_W: f32 = 1.4;
 const HANDLE_STROKE_W: f32 = 2.8;
 const HEAD_RADIUS: f32 = 4.1;
 const JAW_SLOT_W: f32 = 2.7;
-const POPOVER_MAX_WIDTH: f32 = 380.0;
-const POPOVER_TEXT_WIDTH: f32 = 340.0;
+const POPOVER_MAX_WIDTH: f32 = 540.0;
+const POPOVER_TEXT_WIDTH: f32 = 500.0;
 const POPOVER_BOTTOM_MARGIN: f32 = 40.0;
 const POPOVER_MIN_BODY_HEIGHT: f32 = 120.0;
 const GUTTER_W: f32 = 10.0;
 const DOT_RADIUS: f32 = 1.6;
-const BULLET_GAP: f32 = 6.0;
+const BULLET_GAP: f32 = 9.0;
 const DIAGNOSTICS_OFF_TEXT: &str =
     "Turn on diagnostic mode in Settings \u{2192} General to export diagnostics.";
 const HOVER_TEXT: &str = "Help for this screen";
@@ -206,7 +206,7 @@ fn render_popover_body(
     let text = help_text(page);
     ui.label(
         egui::RichText::new(text.title)
-            .size(12.0)
+            .size(14.0)
             .family(egui::FontFamily::Name("poppins_medium".into()))
             .color(redesign_text_primary(palette)),
     );
@@ -256,7 +256,7 @@ fn bullet_job(
             lead,
             0.0,
             egui::TextFormat {
-                font_id: egui::FontId::new(12.0, egui::FontFamily::Name("poppins_medium".into())),
+                font_id: egui::FontId::new(13.0, egui::FontFamily::Name("poppins_medium".into())),
                 color: redesign_text_primary(palette),
                 ..Default::default()
             },
@@ -265,7 +265,7 @@ fn bullet_job(
             " ",
             0.0,
             egui::TextFormat {
-                font_id: egui::FontId::new(12.0, egui::FontFamily::Name("poppins_light".into())),
+                font_id: egui::FontId::new(13.0, egui::FontFamily::Name("poppins_light".into())),
                 color: redesign_text_muted(palette),
                 ..Default::default()
             },
@@ -275,7 +275,7 @@ fn bullet_job(
         bullet.body,
         0.0,
         egui::TextFormat {
-            font_id: egui::FontId::new(12.0, egui::FontFamily::Name("poppins_light".into())),
+            font_id: egui::FontId::new(13.0, egui::FontFamily::Name("poppins_light".into())),
             color: redesign_text_muted(palette),
             ..Default::default()
         },
@@ -302,7 +302,7 @@ fn render_diagnostics_line(ui: &mut egui::Ui, ctx: &egui::Context, palette: Them
     } else {
         ui.label(
             egui::RichText::new(DIAGNOSTICS_OFF_TEXT)
-                .size(11.5)
+                .size(12.5)
                 .family(egui::FontFamily::Name("poppins_light".into()))
                 .color(redesign_text_faint(palette)),
         );
