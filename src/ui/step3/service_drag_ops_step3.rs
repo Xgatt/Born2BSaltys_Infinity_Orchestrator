@@ -77,7 +77,7 @@ pub(crate) fn finalize_on_release(ui: &egui::Ui, ctx: &mut DragFinalizeContext<'
     *drag_grab_pos_in_block = 0;
     *drag_row_h = 0.0;
     *last_insert_at = None;
-    blocks::repair_orphan_children(items, selected, clone_seq);
+    blocks::repair_orphan_children(items, clone_seq);
     blocks::merge_adjacent_same_mod_blocks(items, selected);
     blocks::prune_empty_parent_blocks(items, selected);
     if !selected_keys.is_empty() || !selected_header_blocks.is_empty() {
@@ -209,15 +209,9 @@ pub(crate) fn apply_live_reorder(ui: &egui::Ui, ctx: &mut LiveReorderContext<'_>
             remaining.push(item);
         }
     }
-    let mut insert_at = target_slot;
-    insert_at =
-        drag::visible_slot_to_insert_at(items, &block, visible_rows, insert_at, remaining.len());
-    if block.first().is_some_and(|first| items[*first].is_parent) {
-        insert_at = drag::snap_to_parent_boundary(&remaining, insert_at);
-    } else {
-        insert_at = drag::enforce_child_parent_constraint(&remaining, insert_at, &moving);
-    }
-    insert_at = drag::hard_clamp_insert_at(&remaining, insert_at, &moving);
+    let insert_at =
+        drag::visible_slot_to_insert_at(items, &block, visible_rows, target_slot, remaining.len());
+    let insert_at = drag::resolve_insert_at(&remaining, insert_at, &moving, locked_blocks);
     let mut reordered = remaining;
     reordered.splice(insert_at..insert_at, moving);
     if *items != reordered {
@@ -236,7 +230,7 @@ pub(crate) fn apply_live_reorder(ui: &egui::Ui, ctx: &mut LiveReorderContext<'_>
 
 #[cfg(test)]
 mod tests {
-    use super::{DragFinalizeContext, finalize_on_release};
+    use super::{DragFinalizeContext, LiveReorderContext, apply_live_reorder, finalize_on_release};
     use crate::app::state::Step3ItemState;
     use eframe::egui;
 
@@ -312,6 +306,7 @@ mod tests {
                     last_insert_at: &mut last_insert_at,
                     clone_seq: &mut clone_seq,
                 };
+                assert!(ui.input(|i| i.pointer.any_released()));
                 finalize_on_release(ui, &mut finalize_ctx);
                 finalized = true;
             });
@@ -347,5 +342,145 @@ mod tests {
         selection_after_a_click_release(&mut items, &mut selected);
 
         assert_eq!(selected, vec![3]);
+    }
+
+    fn assert_every_component_sits_under_its_own_header(items: &[Step3ItemState]) {
+        for (idx, item) in items.iter().enumerate() {
+            if item.is_parent {
+                continue;
+            }
+            let parent = items[..idx]
+                .iter()
+                .rev()
+                .find(|i| i.is_parent)
+                .unwrap_or_else(|| panic!("component at {idx} has no header above it"));
+            assert_eq!(parent.block_id, item.block_id);
+            assert_eq!(parent.mod_name, item.mod_name);
+        }
+    }
+
+    #[test]
+    fn a_release_gives_the_stranded_half_its_own_split_header() {
+        let mut items = vec![
+            row("B", "__PARENT__", true),
+            row("B", "1", false),
+            row("A", "__PARENT__", true),
+            row("A", "1", false),
+            row("B", "2", false),
+        ];
+        let mut selected = vec![2, 3];
+
+        selection_after_a_click_release(&mut items, &mut selected);
+
+        assert_eq!(items.len(), 6);
+        assert!(items[4].is_parent);
+        assert!(items[4].parent_placeholder);
+        assert_eq!(items[4].mod_name, "B");
+        assert_eq!(selected, vec![2, 3]);
+        assert_every_component_sits_under_its_own_header(&items);
+    }
+
+    fn stacked_visible_rows(n: usize) -> Vec<(usize, egui::Rect)> {
+        (0..n)
+            .map(|idx| {
+                let top = f32::from(u16::try_from(idx).unwrap_or(u16::MAX)) * 20.0;
+                (
+                    idx,
+                    egui::Rect::from_min_size(egui::pos2(0.0, top), egui::vec2(200.0, 20.0)),
+                )
+            })
+            .collect()
+    }
+
+    fn reorder_after_two_frames(
+        items: &mut Vec<Step3ItemState>,
+        selected: &mut Vec<usize>,
+        drag_indices: &mut Vec<usize>,
+        mut drag_from: Option<usize>,
+        drag_over: Option<usize>,
+        locked_blocks: &[String],
+        visible_rows: &[(usize, egui::Rect)],
+    ) {
+        let ctx = egui::Context::default();
+        let press = egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(egui::pos2(20.0, 20.0)),
+                pointer_button(true),
+            ],
+            ..Default::default()
+        };
+        let _ = ctx.run(press, |_| {});
+        let mut ran = false;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                assert!(ui.input(|i| i.pointer.primary_down()));
+                let mut last_insert_at = None;
+                let grab_pos_in_block = 0usize;
+                let mut reorder_ctx = LiveReorderContext {
+                    items,
+                    selected,
+                    drag_from: &mut drag_from,
+                    drag_over: &drag_over,
+                    drag_indices,
+                    drag_grab_pos_in_block: &grab_pos_in_block,
+                    last_insert_at: &mut last_insert_at,
+                    locked_blocks,
+                    visible_rows,
+                };
+                apply_live_reorder(ui, &mut reorder_ctx);
+                ran = true;
+            });
+        });
+        assert!(ran);
+    }
+
+    #[test]
+    fn a_live_reorder_lands_a_foreign_mod_between_two_components() {
+        let base_items = || {
+            vec![
+                row("A", "__PARENT__", true),
+                row("A", "1", false),
+                row("B", "__PARENT__", true),
+                row("B", "1", false),
+                row("B", "2", false),
+            ]
+        };
+        let visible_rows = stacked_visible_rows(5);
+
+        let mut items = base_items();
+        let mut selected = Vec::new();
+        let mut drag_indices = vec![0, 1];
+        reorder_after_two_frames(
+            &mut items,
+            &mut selected,
+            &mut drag_indices,
+            Some(0),
+            Some(2),
+            &[],
+            &visible_rows,
+        );
+        assert_eq!(
+            items.iter().map(|i| i.mod_name.clone()).collect::<Vec<_>>(),
+            vec!["B", "B", "A", "A", "B"]
+        );
+        assert_eq!(selected, vec![2, 3]);
+
+        let mut items = base_items();
+        let mut selected = Vec::new();
+        let mut drag_indices = vec![0, 1];
+        let locked_blocks = vec!["B::block0".to_string()];
+        reorder_after_two_frames(
+            &mut items,
+            &mut selected,
+            &mut drag_indices,
+            Some(0),
+            Some(2),
+            &locked_blocks,
+            &visible_rows,
+        );
+        assert_eq!(
+            items.iter().map(|i| i.mod_name.clone()).collect::<Vec<_>>(),
+            vec!["B", "B", "B", "A", "A"]
+        );
     }
 }

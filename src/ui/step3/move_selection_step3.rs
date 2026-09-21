@@ -82,7 +82,8 @@ pub(crate) fn moving_set(
     moving
 }
 
-fn header_of_a_fully_selected_mod(
+#[must_use]
+pub(crate) fn header_of_a_fully_selected_mod(
     items: &[Step3ItemState],
     selected: &[usize],
     clicked_idx: usize,
@@ -214,7 +215,7 @@ pub(crate) fn move_selection(
         MoveSelectionTarget::Bottom => (len - n..len).collect(),
     };
 
-    blocks::repair_orphan_children(ctx.items, ctx.selected, ctx.clone_seq);
+    blocks::repair_orphan_children(ctx.items, ctx.clone_seq);
     blocks::merge_adjacent_same_mod_blocks(ctx.items, ctx.selected);
     blocks::prune_empty_parent_blocks(ctx.items, ctx.selected);
 

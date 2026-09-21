@@ -24,8 +24,8 @@ use crate::ui::shared::typography_global::{SIZE_PILL_TEXT, strong};
 use crate::ui::step3::blocks;
 use crate::ui::step3::format_step3;
 use crate::ui::step3::move_selection_step3::{
-    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget, is_locked, move_selection,
-    moving_set,
+    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget,
+    header_of_a_fully_selected_mod, is_locked, move_selection, moving_set,
 };
 use crate::ui::step3::service_step3;
 use crate::ui::step3::state_step3;
@@ -981,8 +981,13 @@ fn handle_drag_start(
     step3_history::push_undo_snapshot(ctx.items, ctx.undo_stack, ctx.redo_stack);
     *ctx.drag_from = Some(idx);
     if !ctx.selected.contains(&idx) {
-        ctx.selected.clear();
-        ctx.selected.push(idx);
+        if header_of_a_fully_selected_mod(ctx.items, ctx.selected, idx) {
+            ctx.selected.push(idx);
+            ctx.selected.sort_unstable();
+        } else {
+            ctx.selected.clear();
+            ctx.selected.push(idx);
+        }
     }
     *ctx.drag_indices = moving;
     update_drag_grab_geometry(ui, ctx, idx, visible_rows);
