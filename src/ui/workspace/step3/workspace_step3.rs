@@ -5,17 +5,12 @@ use eframe::egui;
 
 use crate::app::game_authority::{self, GameSlot};
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
-use crate::ui::shared::redesign_tokens::redesign_text_faint;
 use crate::ui::shared::tab_open_seam::paint_active_tab_seam_cover;
 use crate::ui::step3::state_step3;
 use crate::ui::step3::toolbar_support_step3;
 use crate::ui::workspace::step3::step3_list_body;
 use crate::ui::workspace::step3::step3_tab_row;
 
-const STEP3_BODY_HINT: &str =
-    "Right-click a component for more actions, including uncheck and prompt tools.";
-const BODY_HINT_H: f32 = 22.0;
-const BODY_HINT_GAP: f32 = 10.0;
 const TAB_ROW_H: f32 = 30.0;
 const TAB_TO_LIST_OVERLAP: f32 = 1.5;
 const LIST_MIN_H: f32 = 160.0;
@@ -27,8 +22,6 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) {
     let x = root.left();
     let w = root.width();
     let mut y = root.top();
-    let body_hint_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, BODY_HINT_H));
-    y += BODY_HINT_H + BODY_HINT_GAP;
     let tab_row_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, TAB_ROW_H));
     y += TAB_ROW_H - TAB_TO_LIST_OVERLAP;
     let list_h = (root.bottom() - y).max(LIST_MIN_H);
@@ -50,15 +43,6 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) {
             };
         (toolbar_summary, active_markers)
     };
-
-    ui.scope_builder(egui::UiBuilder::new().max_rect(body_hint_rect), |ui| {
-        ui.label(
-            egui::RichText::new(STEP3_BODY_HINT)
-                .size(14.0)
-                .family(egui::FontFamily::Name("poppins_medium".into()))
-                .color(redesign_text_faint(palette)),
-        );
-    });
 
     let active_tab_rect = step3_tab_row::render(
         ui,

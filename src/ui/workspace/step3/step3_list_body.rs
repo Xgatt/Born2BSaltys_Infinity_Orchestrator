@@ -912,15 +912,6 @@ fn render_child_context_menu(
             });
             ui.close_menu();
         }
-        if ui.button("Edit Prompt JSON...").clicked() {
-            acc.prompt_requests.push(PromptActionRequest::EditJson {
-                tp_file: tp_file.clone(),
-                component_id: component_id.clone(),
-                component_label: component_label.clone(),
-                mod_name: mod_name.clone(),
-            });
-            ui.close_menu();
-        }
         if ui.button("Clear Prompt Data").clicked() {
             acc.prompt_requests.push(PromptActionRequest::Clear {
                 tp_file: tp_file.clone(),

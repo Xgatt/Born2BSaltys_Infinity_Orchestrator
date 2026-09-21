@@ -79,9 +79,7 @@ impl WorkspaceStep {
     pub const fn hint(self) -> &'static str {
         match self {
             Self::Step2 => "Choose components to install.",
-            Self::Step3 => {
-                "Review and adjust install order. Drag to reorder; right-click for more actions."
-            }
+            Self::Step3 => "Drag to set the install order. Right-click a row for more actions.",
             Self::Step4 => {
                 "Verify setup and install order before running. Next saves weidu.log file(s) and advances to install."
             }
