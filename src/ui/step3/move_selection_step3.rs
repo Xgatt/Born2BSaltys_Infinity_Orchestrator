@@ -138,8 +138,7 @@ struct MovingIdentities {
 fn capture_identities(items: &[Step3ItemState], moving: &[usize]) -> MovingIdentities {
     let mut child_keys = HashSet::new();
     let mut parent_block_ids = HashSet::new();
-    for idx in moving {
-        let item = &items[*idx];
+    for item in moving.iter().filter_map(|idx| items.get(*idx)) {
         if item.is_parent {
             parent_block_ids.insert(item.block_id.clone());
         } else {
@@ -193,6 +192,18 @@ fn recompute_selection(items: &[Step3ItemState], identities: &MovingIdentities) 
     selected.sort_unstable();
     selected.dedup();
     selected
+}
+
+pub(crate) fn keep_selection_across(
+    items: &mut Vec<Step3ItemState>,
+    selected: &mut Vec<usize>,
+    anchor: &mut Option<usize>,
+    change: impl FnOnce(&mut Vec<Step3ItemState>),
+) {
+    let identities = capture_identities(items, selected);
+    change(items);
+    *selected = recompute_selection(items, &identities);
+    *anchor = selected.first().copied();
 }
 
 pub(crate) fn move_selection(

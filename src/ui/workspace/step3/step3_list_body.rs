@@ -448,6 +448,8 @@ fn render_header_row(
                     } else if !ctx.collapsed_blocks.contains(&block_id) {
                         ctx.collapsed_blocks.push(block_id.clone());
                     }
+                    ctx.selected.clear();
+                    *ctx.anchor = None;
                 }
 
                 ui.add_space(GLYPH_GAP_PX);
