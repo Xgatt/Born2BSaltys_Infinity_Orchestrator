@@ -10,6 +10,7 @@ use crate::ui::install::state_install::InstallStage;
 use crate::ui::orchestrator::nav_destination::NavDestination;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::orchestrator::page_router;
+use crate::ui::orchestrator::widgets::help_button::{self, HelpPage};
 use crate::ui::orchestrator::widgets::render_screen_title;
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_strong,
@@ -67,6 +68,11 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> StageIns
         post_install_actions::render(ui, palette, &orchestrator.wizard_state, &entry_for_row);
 
     let exe_fingerprint = orchestrator.exe_fingerprint.clone();
+    crate::ui::step5::service_diagnostics_support_step5::apply_diagnostic_log_level(
+        &mut orchestrator.wizard_state.step1,
+        orchestrator.dev_mode,
+        orchestrator.dev_mode_cli_flag,
+    );
     let panel_rect = ui.available_rect_before_wrap();
     let mut action: Option<Step5Action> = None;
     clipped_pane(ui, panel_rect, |ui| {
@@ -105,7 +111,6 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> StageIns
         let allowed = auto_start_allowed(
             &orchestrator.wizard_state,
             orchestrator.step5_terminal_error.as_deref(),
-            orchestrator.dev_mode,
         );
         if auto_start_should_fire(armed, registered, allowed) {
             orchestrator.wizard_state.step5.start_install_requested = true;
@@ -136,18 +141,13 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> StageIns
     outcome
 }
 
-pub(crate) fn auto_start_allowed(
-    state: &WizardState,
-    terminal_error: Option<&str>,
-    dev_mode: bool,
-) -> bool {
+pub(crate) fn auto_start_allowed(state: &WizardState, terminal_error: Option<&str>) -> bool {
     let s5 = &state.step5;
     terminal_error.is_none()
         && !s5.start_install_requested
         && !s5.install_running
         && !s5.prep_running
         && step3_install_block_reason(state).is_none()
-        && (!dev_mode || crate::ui::step5::menus_step5::diagnostics_ready_for_dev(state))
         && !(s5.has_run_once && !s5.resume_available && s5.last_exit_code == Some(0))
 }
 
@@ -183,8 +183,8 @@ fn render_header(
     let mut outcome = StageInstallingOutcome::Stay;
     let sub = format!("{name} \u{00B7} live install console");
     ui.horizontal_top(|ui| {
-        let back_btn_w = 145.0;
-        let title_w = (ui.available_width() - back_btn_w).max(160.0);
+        let right_block_w = if show_back { 145.0 + 30.0 } else { 30.0 };
+        let title_w = (ui.available_width() - right_block_w).max(160.0);
         ui.allocate_ui_with_layout(
             egui::vec2(title_w, ui.available_height()),
             egui::Layout::top_down(egui::Align::Min),
@@ -192,18 +192,20 @@ fn render_header(
                 render_screen_title(ui, palette, "Installing modlist", Some(&sub));
             },
         );
-        if show_back {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                ui.add_space(0.0);
-                if back_to_import_btn(ui, palette, back_label).clicked() {
-                    outcome = if reset_due {
-                        StageInstallingOutcome::BackAfterCompletedInstall
-                    } else {
-                        StageInstallingOutcome::Back(back_target)
-                    };
-                }
-            });
-        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.add_space(0.0);
+            if show_back && back_to_import_btn(ui, palette, back_label).clicked() {
+                outcome = if reset_due {
+                    StageInstallingOutcome::BackAfterCompletedInstall
+                } else {
+                    StageInstallingOutcome::Back(back_target)
+                };
+            }
+            if show_back {
+                ui.add_space(8.0);
+            }
+            help_button::render(ui, palette, HelpPage::Installing);
+        });
     });
     outcome
 }
@@ -328,22 +330,30 @@ mod tests {
     #[test]
     fn auto_start_allowed_on_a_fresh_console() {
         let state = WizardState::default();
-        assert!(auto_start_allowed(&state, None, false));
+        assert!(auto_start_allowed(&state, None));
+    }
+
+    #[test]
+    fn auto_start_allowed_with_no_log_level_flags_set() {
+        let mut state = WizardState::default();
+        state.step1.rust_log_debug = false;
+        state.step1.rust_log_trace = false;
+        assert!(auto_start_allowed(&state, None));
     }
 
     #[test]
     fn auto_start_blocked_while_in_flight() {
         let mut state = WizardState::default();
         state.step5.start_install_requested = true;
-        assert!(!auto_start_allowed(&state, None, false));
+        assert!(!auto_start_allowed(&state, None));
 
         let mut state = WizardState::default();
         state.step5.install_running = true;
-        assert!(!auto_start_allowed(&state, None, false));
+        assert!(!auto_start_allowed(&state, None));
 
         let mut state = WizardState::default();
         state.step5.prep_running = true;
-        assert!(!auto_start_allowed(&state, None, false));
+        assert!(!auto_start_allowed(&state, None));
     }
 
     #[test]
@@ -352,16 +362,16 @@ mod tests {
         state.step5.has_run_once = true;
         state.step5.resume_available = false;
         state.step5.last_exit_code = Some(0);
-        assert!(!auto_start_allowed(&state, None, false));
+        assert!(!auto_start_allowed(&state, None));
 
         state.step5.last_exit_code = Some(1);
-        assert!(auto_start_allowed(&state, None, false));
+        assert!(auto_start_allowed(&state, None));
     }
 
     #[test]
     fn auto_start_blocked_by_a_terminal_error() {
         let state = WizardState::default();
-        assert!(!auto_start_allowed(&state, Some("boom"), false));
+        assert!(!auto_start_allowed(&state, Some("boom")));
     }
 
     #[test]

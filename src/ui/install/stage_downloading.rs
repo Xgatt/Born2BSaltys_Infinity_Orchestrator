@@ -25,6 +25,7 @@ use crate::ui::orchestrator::orchestrator_app::{
 use crate::ui::orchestrator::widgets::dialogs::confirm_dialog::{
     self, ConfirmDialog, ConfirmOutcome,
 };
+use crate::ui::orchestrator::widgets::help_button::{self, HelpPage};
 use crate::ui::orchestrator::widgets::render_screen_title;
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_accent,
@@ -2012,7 +2013,19 @@ pub(crate) fn render_chrome(
     arm_error: Option<&str>,
     manual: Option<&mut ManualDownloadsState>,
 ) -> (bool, PanelAction) {
-    render_screen_title(ui, palette, copy.title, Some(copy.sub));
+    let help_page = HelpPage::Downloading {
+        manual_downloads: manual.is_some(),
+    };
+    ui.horizontal_top(|ui| {
+        let title_width = (ui.available_width() - 30.0).max(0.0);
+        ui.vertical(|ui| {
+            ui.set_width(title_width);
+            render_screen_title(ui, palette, copy.title, Some(copy.sub));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            help_button::render(ui, palette, help_page);
+        });
+    });
     ui.add_space(12.0);
 
     let mut panel_action = PanelAction::None;

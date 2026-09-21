@@ -48,6 +48,7 @@ use crate::ui::orchestrator::page_router;
 use crate::ui::orchestrator::stubs::home_stub::HomeStubState;
 use crate::ui::orchestrator::widgets::NotificationManager;
 use crate::ui::orchestrator::widgets::clipboard;
+use crate::ui::orchestrator::widgets::help_button;
 use crate::ui::settings::oauth_glue;
 use crate::ui::settings::state_settings::SettingsScreenState;
 use crate::ui::settings::validate_debounce;
@@ -1479,6 +1480,7 @@ impl eframe::App for OrchestratorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let palette = self.theme_palette;
         ctx.set_visuals(crate::ui::shared::redesign_visuals::build_for(palette));
+        self.sync_diagnostic_mode(ctx);
 
         validate_debounce::tick(self, Instant::now());
         refresh_source_compatibility(self);
@@ -1655,12 +1657,44 @@ impl OrchestratorApp {
         for msg in clipboard::take_pending_toasts(ctx) {
             self.notification_manager.success(msg);
         }
+        if help_button::take_export_request(ctx) {
+            self.export_diagnostics_from_help();
+        }
         if history_clicked {
             self.notification_manager.history_open = !self.notification_manager.history_open;
         }
         self.notification_manager.show(ctx, palette);
         self.notification_manager
             .render_history_popup(ctx, palette, !history_clicked);
+    }
+
+    fn sync_diagnostic_mode(&mut self, ctx: &egui::Context) {
+        help_button::publish_diagnostic_mode(ctx, self.dev_mode);
+        crate::ui::step5::service_diagnostics_support_step5::apply_diagnostic_log_level(
+            &mut self.wizard_state.step1,
+            self.dev_mode,
+            self.dev_mode_cli_flag,
+        );
+    }
+
+    fn export_diagnostics_from_help(&mut self) {
+        let exe_fingerprint = self.exe_fingerprint.clone();
+        let result = crate::ui::step5::service_diagnostics_support_step5::export_diagnostics(
+            &self.wizard_state,
+            self.step5_terminal.as_ref(),
+            self.dev_mode,
+            &exe_fingerprint,
+        );
+        match result {
+            Ok(path) => {
+                self.notification_manager
+                    .success(format!("Diagnostics exported: {}", path.display()));
+            }
+            Err(err) => {
+                self.notification_manager
+                    .error(format!("Diagnostics export failed: {err}"));
+            }
+        }
     }
 }
 

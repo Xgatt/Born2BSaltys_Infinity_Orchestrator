@@ -59,6 +59,11 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, modlist_id:
     }
 
     let exe_fingerprint = orchestrator.exe_fingerprint.clone();
+    crate::ui::step5::service_diagnostics_support_step5::apply_diagnostic_log_level(
+        &mut orchestrator.wizard_state.step1,
+        orchestrator.dev_mode,
+        orchestrator.dev_mode_cli_flag,
+    );
     let panel_rect = ui.available_rect_before_wrap();
     let mut action: Option<Step5Action> = None;
     clipped_pane(ui, panel_rect, |ui| {

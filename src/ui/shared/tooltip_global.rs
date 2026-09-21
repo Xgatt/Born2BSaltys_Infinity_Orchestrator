@@ -68,7 +68,6 @@ pub const STEP4_SAVE_WEIDU_LOG: &str = "Write weidu.log file(s) from the current
 pub const STEP5_FORCE_CANCEL: &str = "Immediate stop. May leave game/mod state unrecoverable.";
 pub const STEP5_CANCEL_INSTALL: &str = "Request cancel. Confirmation required.";
 pub const STEP5_START_INSTALL: &str = "Start installer with current configuration.";
-pub const STEP5_DEV_MODE_DIAG_REQUIRED: &str = "Dev mode requires diagnostics: enable Full Debug + Raw Output and set RUST_LOG to DEBUG or TRACE.";
 pub const STEP5_GENERAL_OUTPUT: &str = "Show full output (no filtering).";
 pub const STEP5_IMPORTANT_ONLY: &str = "Show only important lines (warn/error/fatal/prompts).";
 pub const STEP5_INSTALLED_ONLY: &str = "Show only installation progress lines.";

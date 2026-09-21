@@ -10,6 +10,7 @@ use crate::registry::share_export::{self, ShareMeta};
 use crate::registry::store_workspace::WorkspaceStore;
 use crate::ui::orchestrator::orchestrator_app::OrchestratorApp;
 use crate::ui::orchestrator::widgets::dialogs::fork_info_popup::{self, SelfNode};
+use crate::ui::orchestrator::widgets::help_button::{self, HelpPage};
 use crate::ui::orchestrator::widgets::{BtnOpts, redesign_btn};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_accent,
@@ -26,10 +27,7 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
     let palette = orchestrator.theme_palette;
 
     ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            render_title_row(ui, orchestrator, palette);
-            render_fork_subline(ui, orchestrator, palette);
-        });
+        render_title_row(ui, orchestrator, palette);
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             render_save_or_share_button(ui, orchestrator, palette);
@@ -38,11 +36,26 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp, ctx: &egui:
             {
                 orchestrator.workspace_view.fork_info_open = true;
             }
+            ui.add_space(8.0);
+            let created_from_mods = orchestrator.workspace_view.fork_meta.is_none();
+            let page =
+                help_page_for_step(orchestrator.workspace_view.current_step, created_from_mods);
+            help_button::render(ui, palette, page);
         });
     });
+    render_fork_subline(ui, orchestrator, palette);
 
     if orchestrator.workspace_view.fork_info_open {
         render_fork_info_popup(orchestrator, palette, ctx);
+    }
+}
+
+const fn help_page_for_step(step: WorkspaceStep, created_from_mods: bool) -> HelpPage {
+    match step {
+        WorkspaceStep::Step2 => HelpPage::Step2 { created_from_mods },
+        WorkspaceStep::Step3 => HelpPage::Step3,
+        WorkspaceStep::Step4 => HelpPage::Step4,
+        WorkspaceStep::Step5 => HelpPage::Step5,
     }
 }
 
@@ -191,7 +204,7 @@ fn render_fork_subline(ui: &mut egui::Ui, orchestrator: &OrchestratorApp, palett
         return;
     };
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         paint_inline_fork(ui, redesign_accent_deep(palette));
         ui.add_space(5.0);

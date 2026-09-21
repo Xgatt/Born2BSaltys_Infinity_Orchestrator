@@ -6,6 +6,8 @@ pub mod btn;
 pub mod clipboard;
 pub mod dialogs;
 pub mod drawer;
+pub mod help_button;
+pub mod help_copy;
 pub mod icon_button;
 pub mod input;
 pub mod kebab;
