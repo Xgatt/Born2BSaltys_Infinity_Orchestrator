@@ -49,7 +49,7 @@ pub(crate) fn apply_text_prompt_jump(state: &mut WizardState, title: &str, compo
         let _ = step3_jump_to_target(state, &game_tab, &mod_ref, Some(component_id));
     } else {
         let game_tab = state.step2.active_game_tab.clone();
-        step2_jump_to_target(state, &game_tab, &mod_ref, Some(component_id));
+        let _ = step2_jump_to_target(state, &game_tab, &mod_ref, Some(component_id));
         state.step2.jump_to_selected_requested = true;
     }
 }
@@ -90,7 +90,7 @@ pub(crate) fn apply_toolbar_prompt_jump(
     if state.current_step == 2 {
         let _ = step3_jump_to_target(state, &game_tab, mod_ref, component_id);
     } else if let Some(component_id) = component_id {
-        step2_jump_to_target(state, &game_tab, mod_ref, Some(component_id));
+        let _ = step2_jump_to_target(state, &game_tab, mod_ref, Some(component_id));
         state.step2.jump_to_selected_requested = true;
     } else {
         select_step2_mod_row(state, &game_tab, mod_ref);

@@ -11,7 +11,7 @@ pub(crate) fn step2_jump_to_target(
     game_tab: &str,
     mod_ref: &str,
     component_ref: Option<u32>,
-) {
+) -> bool {
     let target_key = normalize_mod_key(mod_ref);
     let mods = if game_authority::slot_for_tab(game_tab) == GameSlot::First {
         &state.step2.bgee_mods
@@ -34,7 +34,7 @@ pub(crate) fn step2_jump_to_target(
                     component_id: component.component_id.clone(),
                     component_key: component.raw_line.clone(),
                 });
-                return;
+                return true;
             }
         } else if let Some(component) = mod_state.components.iter().find(|component| {
             parse_component_tp2_from_raw(&component.raw_line).map_or_else(
@@ -48,7 +48,7 @@ pub(crate) fn step2_jump_to_target(
                 component_id: component.component_id.clone(),
                 component_key: component.raw_line.clone(),
             });
-            return;
+            return true;
         }
         if normalize_mod_key(&mod_state.tp_file) != target_key {
             continue;
@@ -57,8 +57,9 @@ pub(crate) fn step2_jump_to_target(
             game_tab: game_tab.to_string(),
             tp_file: mod_state.tp_file.clone(),
         });
-        return;
+        return true;
     }
+    false
 }
 
 pub(crate) fn step3_jump_to_target(
@@ -181,7 +182,8 @@ mod tests {
     fn selection_jump_routes_iwdee_to_the_first_container() {
         let mut state = WizardState::default();
         state.step2.bgee_mods = vec![mod_state("mod/mod.tp2")];
-        step2_jump_to_target(&mut state, "IWDEE", "mod/mod.tp2", None);
+        let found = step2_jump_to_target(&mut state, "IWDEE", "mod/mod.tp2", None);
+        assert!(found);
         match state.step2.selected.as_ref() {
             Some(Step2Selection::Mod { game_tab, tp_file }) => {
                 assert_eq!(game_tab, "IWDEE");
@@ -189,5 +191,14 @@ mod tests {
             }
             other => panic!("expected a mod selection, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn step2_jump_reports_a_missing_mod() {
+        let mut state = WizardState::default();
+        state.step2.bgee_mods = vec![mod_state("mod/mod.tp2")];
+        let found = step2_jump_to_target(&mut state, "BGEE", "other/other.tp2", None);
+        assert!(!found);
+        assert!(state.step2.selected.is_none());
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Born2BSalty
 
+pub mod related_jump;
 pub mod state_workspace;
 pub mod step2;
 pub mod step2_log_glue;

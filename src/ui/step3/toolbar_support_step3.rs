@@ -5,8 +5,12 @@ pub(crate) use crate::app::step3_toolbar::{
     Step3ToolbarSummary, build_toolbar_summary, open_toolbar_issue_popup, tab_has_conflict,
 };
 
-use crate::app::state::WizardState;
-use crate::ui::step3::move_selection_step3::restore_selection_after_history;
+use crate::app::state::{Step3ItemState, WizardState};
+use crate::app::step3_history::{Step3HistoryEntry, Step3TouchedRows};
+use crate::ui::step3::move_selection_step3::{
+    expand_blocks_hiding_lit_components, restore_selection_after_history,
+};
+use crate::ui::step3::state_step3::active_list_mut;
 use crate::ui::step5::service_diagnostics_support_step5::export_diagnostics;
 
 pub(crate) fn export_diagnostics_from_step3(
@@ -40,20 +44,47 @@ pub(crate) fn collapse_all_active(state: &mut WizardState) {
     *anchor = None;
 }
 
-pub(crate) fn redo_active(state: &mut WizardState) {
-    let (items, selected, _, _, _, anchor, _, _, _, _, _, _, _, undo_stack, redo_stack) =
-        crate::ui::step3::state_step3::active_list_mut(state);
+fn step_history_active(
+    state: &mut WizardState,
+    change: impl FnOnce(
+        &mut Vec<Step3ItemState>,
+        &mut Vec<Step3HistoryEntry>,
+        &mut Vec<Step3HistoryEntry>,
+    ) -> Option<Step3TouchedRows>,
+) {
+    let (
+        items,
+        selected,
+        _,
+        _,
+        _,
+        anchor,
+        _,
+        _,
+        _,
+        _,
+        collapsed_blocks,
+        _,
+        _,
+        undo_stack,
+        redo_stack,
+    ) = active_list_mut(state);
     restore_selection_after_history(items, selected, anchor, |items| {
-        crate::app::step3_history::redo(items, undo_stack, redo_stack)
+        change(items, undo_stack, redo_stack)
     });
+    expand_blocks_hiding_lit_components(items, selected, collapsed_blocks);
+    let anything_lit = !selected.is_empty();
+    if anything_lit {
+        state.step3.jump_to_selected_requested = true;
+    }
+}
+
+pub(crate) fn redo_active(state: &mut WizardState) {
+    step_history_active(state, crate::app::step3_history::redo);
 }
 
 pub(crate) fn undo_active(state: &mut WizardState) {
-    let (items, selected, _, _, _, anchor, _, _, _, _, _, _, _, undo_stack, redo_stack) =
-        crate::ui::step3::state_step3::active_list_mut(state);
-    restore_selection_after_history(items, selected, anchor, |items| {
-        crate::app::step3_history::undo(items, undo_stack, redo_stack)
-    });
+    step_history_active(state, crate::app::step3_history::undo);
 }
 
 #[cfg(test)]
@@ -166,6 +197,80 @@ mod tests {
 
         redo_active(&mut state);
         assert_eq!(selection_and_anchor(&mut state), (vec![0, 1], Some(0)));
+    }
+
+    #[test]
+    fn undo_raises_the_scroll_flag_when_rows_light_up() {
+        let mut state = state_with_three_one_component_mods();
+        {
+            let (items, _, _, _, _, _, _, _, _, _, _, _, _, undo_stack, redo_stack) =
+                active_list_mut(&mut state);
+            let a_touched = capture_identities(items, &[0, 1]);
+            step3_history::push_undo_snapshot(items, a_touched, undo_stack, redo_stack);
+            items.swap(0, 1);
+        }
+        state.step3.jump_to_selected_requested = false;
+
+        undo_active(&mut state);
+        assert!(state.step3.jump_to_selected_requested);
+
+        state.step3.jump_to_selected_requested = false;
+        redo_active(&mut state);
+        assert!(state.step3.jump_to_selected_requested);
+    }
+
+    #[test]
+    fn undo_that_lights_nothing_raises_no_scroll() {
+        let mut state = state_with_three_one_component_mods();
+        state.step3.jump_to_selected_requested = false;
+
+        undo_active(&mut state);
+
+        assert!(!state.step3.jump_to_selected_requested);
+    }
+
+    #[test]
+    fn undo_expands_a_collapsed_mod_that_hides_a_lit_component() {
+        let mut state = state_with_three_one_component_mods();
+        {
+            let (items, _, _, _, _, _, _, _, _, _, collapsed_blocks, _, _, undo_stack, redo_stack) =
+                active_list_mut(&mut state);
+            let touched = capture_identities(items, &[3]);
+            step3_history::push_undo_snapshot(items, touched, undo_stack, redo_stack);
+            items.swap(3, 5);
+            collapsed_blocks.push("B::block0".to_string());
+        }
+
+        undo_active(&mut state);
+
+        let (items, selected, _, _, _, _, _, _, _, _, collapsed_blocks, _, _, _, _) =
+            active_list_mut(&mut state);
+        assert!(!collapsed_blocks.contains(&"B::block0".to_string()));
+        assert_eq!(selected.len(), 1);
+        let idx = selected[0];
+        assert_eq!(items[idx].mod_name, "B");
+        assert_eq!(items[idx].component_id, "1");
+    }
+
+    #[test]
+    fn undo_keeps_a_whole_moved_mod_collapsed() {
+        let mut state = state_with_three_one_component_mods();
+        {
+            let (items, _, _, _, _, _, _, _, _, _, collapsed_blocks, _, _, undo_stack, redo_stack) =
+                active_list_mut(&mut state);
+            let touched = capture_identities(items, &[0, 1]);
+            step3_history::push_undo_snapshot(items, touched, undo_stack, redo_stack);
+            items.swap(0, 2);
+            items.swap(1, 3);
+            collapsed_blocks.push("A::block0".to_string());
+        }
+
+        undo_active(&mut state);
+
+        let (_, selected, _, _, _, _, _, _, _, _, collapsed_blocks, _, _, _, _) =
+            active_list_mut(&mut state);
+        assert!(collapsed_blocks.contains(&"A::block0".to_string()));
+        assert_eq!(selected.len(), 2);
     }
 
     #[test]

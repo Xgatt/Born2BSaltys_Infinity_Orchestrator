@@ -356,8 +356,10 @@ fn render_popups(
     action: &mut Option<Step2Action>,
     palette: crate::ui::shared::redesign_tokens::ThemePalette,
 ) {
-    crate::ui::step2::compat_window_step2::render(ui, &mut orchestrator.wizard_state, palette);
+    let outcome =
+        crate::ui::step2::compat_window_step2::render(ui, &mut orchestrator.wizard_state, palette);
     crate::ui::step2::prompt_popup_step2::render_prompt_popup(ui, &mut orchestrator.wizard_state);
+    crate::ui::workspace::related_jump::apply_related_jump_outcome(orchestrator, outcome);
     crate::ui::step2::update_check_popup_step2::render(
         ctx,
         &mut orchestrator.wizard_state,

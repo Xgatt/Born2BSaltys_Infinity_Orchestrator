@@ -189,6 +189,27 @@ fn recompute_selection(items: &[Step3ItemState], touched: &Step3TouchedRows) -> 
     selected
 }
 
+pub(crate) fn expand_blocks_hiding_lit_components(
+    items: &[Step3ItemState],
+    selected: &[usize],
+    collapsed_blocks: &mut Vec<String>,
+) {
+    let lit_headers: HashSet<&str> = selected
+        .iter()
+        .filter_map(|idx| items.get(*idx))
+        .filter(|item| item.is_parent)
+        .map(|item| item.block_id.as_str())
+        .collect();
+    let blocks_to_expand: HashSet<&str> = selected
+        .iter()
+        .filter_map(|idx| items.get(*idx))
+        .filter(|item| !item.is_parent)
+        .map(|item| item.block_id.as_str())
+        .filter(|block_id| !lit_headers.contains(block_id))
+        .collect();
+    collapsed_blocks.retain(|block_id| !blocks_to_expand.contains(block_id.as_str()));
+}
+
 pub(crate) fn restore_selection_after_history(
     items: &mut Vec<Step3ItemState>,
     selected: &mut Vec<usize>,
@@ -738,6 +759,38 @@ mod tests {
             vec![2, 3, 4, 5, 6, 7]
         );
         assert_eq!(moving_set(&items, &components_only, &[], 0), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn expand_skips_blocks_whose_header_is_lit() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+        ];
+        let selected = vec![0, 1];
+        let mut collapsed_blocks = vec!["A::b0".to_string()];
+
+        expand_blocks_hiding_lit_components(&items, &selected, &mut collapsed_blocks);
+
+        assert_eq!(collapsed_blocks, vec!["A::b0".to_string()]);
+    }
+
+    #[test]
+    fn expand_opens_only_the_blocks_that_hide_lit_components() {
+        let items = vec![
+            parent("A", "A::b0"),
+            child("A", "A::b0", "1", 1),
+            parent("B", "B::b0"),
+            child("B", "B::b0", "1", 2),
+        ];
+        let selected = vec![1];
+        let mut collapsed_blocks = vec!["A::b0".to_string(), "B::b0".to_string()];
+
+        expand_blocks_hiding_lit_components(&items, &selected, &mut collapsed_blocks);
+
+        assert_eq!(collapsed_blocks, vec!["B::b0".to_string()]);
     }
 
     #[test]

@@ -77,9 +77,13 @@ fn render_step3(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) {
         paint_active_tab_seam_cover(ui.painter(), palette, tab_rect, list_rect.top());
     }
 
-    let state = &mut orchestrator.wizard_state;
-    crate::ui::step2::content_step2::render_compat_popup(ui, state);
-    crate::ui::step2::prompt_popup_step2::render_prompt_popup(ui, state);
+    let outcome = {
+        let state = &mut orchestrator.wizard_state;
+        let outcome = crate::ui::step2::content_step2::render_compat_popup(ui, state);
+        crate::ui::step2::prompt_popup_step2::render_prompt_popup(ui, state);
+        outcome
+    };
+    crate::ui::workspace::related_jump::apply_related_jump_outcome(orchestrator, outcome);
 }
 
 fn clipped_pane(ui: &mut egui::Ui, rect: egui::Rect, add: impl FnOnce(&mut egui::Ui)) {
