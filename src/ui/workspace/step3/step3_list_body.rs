@@ -26,8 +26,13 @@ use crate::ui::step3::block_selection_step3::{
 };
 use crate::ui::step3::blocks;
 use crate::ui::step3::format_step3;
+use crate::ui::step3::move_selection_step3::{
+    MoveSelectionContext, MoveSelectionOutcome, MoveSelectionTarget, move_selection,
+};
 use crate::ui::step3::service_step3;
 use crate::ui::step3::state_step3;
+
+const MOVE_LOCKED_NOTICE: &str = "Locked mods cannot be moved. Unlock them first.";
 
 const BOX_PADDING: f32 = 10.0;
 const CHILD_INDENT: f32 = 18.0;
@@ -83,6 +88,7 @@ struct RowAccumulator {
         String,
         crate::app::compat_issue::CompatIssue,
     )>,
+    move_request: Option<(usize, MoveSelectionTarget)>,
 }
 
 impl RowAccumulator {
@@ -93,6 +99,7 @@ impl RowAccumulator {
             prompt_requests: Vec::new(),
             open_prompt_popup: None,
             open_compat_popup: None,
+            move_request: None,
         }
     }
 }
@@ -138,11 +145,23 @@ pub(crate) fn render(
     child.set_clip_rect(inner.intersect(ui.clip_rect()));
     child.add_space(3.0);
 
-    render_scroll_body(&mut child, state, palette, compat_markers);
+    let move_outcome = render_scroll_body(&mut child, state, palette, compat_markers);
 
     ui.allocate_rect(box_rect, egui::Sense::hover());
 
     service_step3::prompt_actions::render(ui, state);
+
+    apply_move_outcome(orchestrator, move_outcome);
+}
+
+fn apply_move_outcome(orchestrator: &mut OrchestratorApp, outcome: Option<MoveSelectionOutcome>) {
+    match outcome {
+        Some(MoveSelectionOutcome::Moved) => orchestrator.mark_workspace_dirty(),
+        Some(MoveSelectionOutcome::RefusedLocked) => {
+            orchestrator.notification_manager.warn(MOVE_LOCKED_NOTICE);
+        }
+        Some(MoveSelectionOutcome::NothingToMove) | None => {}
+    }
 }
 
 fn render_scroll_body(
@@ -150,7 +169,7 @@ fn render_scroll_body(
     state: &mut WizardState,
     palette: ThemePalette,
     compat_markers: &HashMap<String, Step3CompatMarker>,
-) {
+) -> Option<MoveSelectionOutcome> {
     let tab_id = state.step3.active_game_tab.clone();
     let prompt_eval = build_prompt_eval_context(state);
     let initial_jump = state.step3.jump_to_selected_requested;
@@ -168,11 +187,9 @@ fn render_scroll_body(
 
     state.step3.jump_to_selected_requested = state.step3.jump_to_selected_requested || final_jump;
 
-    let Some(mut acc) = acc_opt else {
-        return;
-    };
+    let mut acc = acc_opt?;
 
-    flush_row_outcome(state, &tab_id, &mut acc);
+    flush_row_outcome(state, &tab_id, &mut acc)
 }
 
 fn run_row_pipeline(
@@ -455,7 +472,7 @@ fn render_header_row(
     let drag_id = ui.make_persistent_id(("step3b_drag_parent", ctx.tab_id, idx));
     let drag_response = ui.interact(label_response.rect, drag_id, egui::Sense::click_and_drag());
 
-    render_parent_context_menu(&drag_response, ctx, idx);
+    render_parent_context_menu(&drag_response, ctx, idx, acc);
     acc.visible_rows.push((idx, label_response.rect));
     handle_jump_to_selected(ui, ctx, idx, label_response.rect);
     handle_row_selection(ui, ctx, idx, &label_response, &drag_response);
@@ -841,8 +858,26 @@ fn render_prompt_pill(
     }
 }
 
-fn render_parent_context_menu(drag_response: &egui::Response, ctx: &mut RenderCtx<'_>, idx: usize) {
+fn render_move_selection_entries(ui: &mut egui::Ui, idx: usize, acc: &mut RowAccumulator) {
+    if ui.button("Move selection to top").clicked() {
+        acc.move_request = Some((idx, MoveSelectionTarget::Top));
+        ui.close_menu();
+    }
+    if ui.button("Move selection to bottom").clicked() {
+        acc.move_request = Some((idx, MoveSelectionTarget::Bottom));
+        ui.close_menu();
+    }
+    ui.separator();
+}
+
+fn render_parent_context_menu(
+    drag_response: &egui::Response,
+    ctx: &mut RenderCtx<'_>,
+    idx: usize,
+    acc: &mut RowAccumulator,
+) {
     drag_response.context_menu(|ui| {
+        render_move_selection_entries(ui, idx, acc);
         if ui.button("Clone Parent (empty split target)").clicked() {
             step3_history::push_undo_snapshot(ctx.items, ctx.undo_stack, ctx.redo_stack);
             blocks::clone_parent_empty_block(ctx.items, idx, ctx.clone_seq);
@@ -862,6 +897,7 @@ fn render_child_context_menu(
     let component_label = ctx.items[idx].component_label.clone();
     let mod_name = ctx.items[idx].mod_name.clone();
     drag_response.context_menu(|ui| {
+        render_move_selection_entries(ui, idx, acc);
         if ui.button("Uncheck In Step 2").clicked() {
             acc.uncheck_requests
                 .push((tp_file.clone(), component_id.clone()));
@@ -1039,7 +1075,11 @@ fn run_drag_pipeline(ui: &egui::Ui, ctx: &mut RenderCtx<'_>, visible_rows: &[(us
     service_step3::drag_ops::finalize_on_release(ui, &mut finalize_ctx);
 }
 
-fn flush_row_outcome(state: &mut WizardState, tab_id: &str, acc: &mut RowAccumulator) {
+fn flush_row_outcome(
+    state: &mut WizardState,
+    tab_id: &str,
+    acc: &mut RowAccumulator,
+) -> Option<MoveSelectionOutcome> {
     if let Some((title, text)) = acc.open_prompt_popup.take() {
         crate::ui::step2::prompt_popup_step2::open_text_prompt_popup(state, title, text);
     }
@@ -1063,6 +1103,34 @@ fn flush_row_outcome(state: &mut WizardState, tab_id: &str, acc: &mut RowAccumul
     if !acc.prompt_requests.is_empty() {
         service_step3::prompt_actions::apply_prompt_actions(state, &acc.prompt_requests);
     }
+    let (clicked_idx, target) = acc.move_request.take()?;
+    let (
+        items,
+        selected,
+        _drag_from,
+        _drag_over,
+        _drag_indices,
+        anchor,
+        _drag_grab_offset,
+        _drag_grab_pos_in_block,
+        _drag_row_h,
+        _last_insert_at,
+        _collapsed_blocks,
+        clone_seq,
+        locked_blocks,
+        undo_stack,
+        redo_stack,
+    ) = state_step3::active_list_mut(state);
+    let mut move_ctx = MoveSelectionContext {
+        items,
+        selected,
+        anchor,
+        clone_seq,
+        locked_blocks: locked_blocks.as_slice(),
+        undo_stack,
+        redo_stack,
+    };
+    Some(move_selection(&mut move_ctx, clicked_idx, target))
 }
 
 fn paint_insert_marker_full_width(
@@ -1100,6 +1168,37 @@ fn paint_insert_marker_full_width(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_move_marks_the_draft_unsaved_without_a_toast() {
+        let mut app = OrchestratorApp::new_isolated_for_test("step3movedirty");
+        let clean_before = !app.workspace_state_dirty;
+
+        apply_move_outcome(&mut app, Some(MoveSelectionOutcome::Moved));
+
+        let clean_after = !app.workspace_state_dirty;
+        assert!(clean_before);
+        assert!(!clean_after);
+        assert!(app.notification_manager.history().is_empty());
+    }
+
+    #[test]
+    fn refused_move_warns_once_and_leaves_the_draft_clean() {
+        let mut app = OrchestratorApp::new_isolated_for_test("step3movelocked");
+
+        apply_move_outcome(&mut app, Some(MoveSelectionOutcome::RefusedLocked));
+        apply_move_outcome(&mut app, Some(MoveSelectionOutcome::NothingToMove));
+        apply_move_outcome(&mut app, None);
+
+        let clean_after = !app.workspace_state_dirty;
+        assert!(clean_after);
+        let history = app.notification_manager.history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history.back().map(|record| record.text.as_str()),
+            Some(MOVE_LOCKED_NOTICE)
+        );
+    }
 
     fn make_item(mod_name: &str, id: &str, label: &str, is_parent: bool) -> Step3ItemState {
         Step3ItemState {
