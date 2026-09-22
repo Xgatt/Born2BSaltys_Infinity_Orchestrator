@@ -30,7 +30,7 @@ pub(super) fn render_source_editor_popup(
             ui.set_min_size(ui.available_size());
             ui.label(format!(
                 "{} ({})",
-                state.step2.mod_download_source_editor_label,
+                state.step2.mod_download_source_editor_display_name,
                 state.step2.mod_download_source_editor_source_id
             ));
             if let Some(err) = state.step2.mod_download_source_editor_error.as_ref() {

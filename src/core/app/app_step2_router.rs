@@ -237,6 +237,7 @@ fn add_discovered_mod_download_fork(
     owner_login: &str,
     default_branch: &str,
 ) {
+    let display_name = source_editor_display_name(state, &tp2, &label);
     let source_id = owner_login.trim().to_ascii_lowercase();
     let source_block = format!(
         "[[mods.sources]]\nid = \"{}\"\nlabel = \"{}\"\ntype = \"github\"\nurl = \"https://github.com/{}\"\nrepo = \"{}\"\nbranch = \"{}\"",
@@ -249,6 +250,7 @@ fn add_discovered_mod_download_fork(
     state.step2.mod_download_source_editor_open = true;
     state.step2.mod_download_source_editor_tp2 = tp2;
     state.step2.mod_download_source_editor_label = label;
+    state.step2.mod_download_source_editor_display_name = display_name;
     state.step2.mod_download_source_editor_source_id = source_id;
     state
         .step2
@@ -294,6 +296,7 @@ fn open_mod_download_source_editor(
     use crate::app::mod_downloads::SeedScope;
     use crate::app::step2_action::ModSourceEditDestination;
 
+    let display_name = source_editor_display_name(state, &tp2, &label);
     let (target_path, seed_scope) = match destination {
         ModSourceEditDestination::GlobalDefault => (None, SeedScope::GlobalOnly),
         ModSourceEditDestination::ThisModlist => (
@@ -314,6 +317,7 @@ fn open_mod_download_source_editor(
             state.step2.mod_download_source_editor_open = true;
             state.step2.mod_download_source_editor_tp2 = tp2;
             state.step2.mod_download_source_editor_label = label;
+            state.step2.mod_download_source_editor_display_name = display_name;
             state.step2.mod_download_source_editor_source_id = source_id;
             state
                 .step2
@@ -616,6 +620,10 @@ fn refresh_update_result_for_tp2(
     true
 }
 
+fn source_editor_display_name(state: &WizardState, tp2: &str, label: &str) -> String {
+    update_target_for_tp2(state, tp2).map_or_else(|| label.to_string(), |(_, tp_file)| tp_file)
+}
+
 fn update_target_for_tp2(state: &WizardState, tp2: &str) -> Option<(String, String)> {
     let target = mod_downloads::normalize_mod_download_tp2(tp2);
     if target.is_empty() {
@@ -850,5 +858,50 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn source_editor_display_name_is_the_mods_tp2_file() {
+        let mut state = WizardState::default();
+        state
+            .step2
+            .bgee_mods
+            .push(make_mod_state("setup-buffbot.tp2"));
+
+        assert_eq!(
+            super::source_editor_display_name(&state, "buffbot", "buffbot"),
+            "setup-buffbot.tp2"
+        );
+    }
+
+    #[test]
+    fn source_editor_display_name_finds_a_pending_log_download() {
+        use crate::app::state::Step2LogPendingDownload;
+
+        let mut state = WizardState::default();
+        state
+            .step2
+            .log_pending_downloads
+            .push(Step2LogPendingDownload {
+                game_tab: "BGEE".to_string(),
+                tp_file: "setup-buffbot.tp2".to_string(),
+                label: "buffbot".to_string(),
+                requested_version: None,
+            });
+
+        assert_eq!(
+            super::source_editor_display_name(&state, "buffbot", "buffbot"),
+            "setup-buffbot.tp2"
+        );
+    }
+
+    #[test]
+    fn source_editor_display_name_falls_back_to_the_label() {
+        let state = WizardState::default();
+
+        assert_eq!(
+            super::source_editor_display_name(&state, "newmod", "New Mod"),
+            "New Mod"
+        );
     }
 }
