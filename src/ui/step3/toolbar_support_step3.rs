@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn undo_keeps_a_whole_moved_mod_collapsed() {
+    fn undo_opens_a_whole_moved_mod_that_is_collapsed() {
         let mut state = state_with_three_one_component_mods();
         {
             let (items, _, _, _, _, _, _, _, _, _, collapsed_blocks, _, _, undo_stack, redo_stack) =
@@ -269,7 +269,7 @@ mod tests {
 
         let (_, selected, _, _, _, _, _, _, _, _, collapsed_blocks, _, _, _, _) =
             active_list_mut(&mut state);
-        assert!(collapsed_blocks.contains(&"A::block0".to_string()));
+        assert!(!collapsed_blocks.contains(&"A::block0".to_string()));
         assert_eq!(selected.len(), 2);
     }
 

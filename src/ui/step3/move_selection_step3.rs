@@ -194,23 +194,13 @@ pub(crate) fn expand_blocks_hiding_lit_components(
     selected: &[usize],
     collapsed_blocks: &mut Vec<String>,
 ) {
-    let lit: HashSet<usize> = selected.iter().copied().collect();
     let blocks_to_expand: HashSet<&str> = selected
         .iter()
         .filter_map(|idx| items.get(*idx))
         .filter(|item| !item.is_parent)
         .map(|item| item.block_id.as_str())
-        .filter(|block_id| !block_is_lit_in_full(items, &lit, block_id))
         .collect();
     collapsed_blocks.retain(|block_id| !blocks_to_expand.contains(block_id.as_str()));
-}
-
-fn block_is_lit_in_full(items: &[Step3ItemState], lit: &HashSet<usize>, block_id: &str) -> bool {
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.block_id == block_id)
-        .all(|(idx, _)| lit.contains(&idx))
 }
 
 pub(crate) fn restore_selection_after_history(
@@ -765,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_keeps_a_block_lit_in_full_collapsed() {
+    fn expand_opens_a_block_lit_in_full() {
         let items = vec![
             parent("A", "A::b0"),
             child("A", "A::b0", "1", 1),
@@ -773,11 +763,11 @@ mod tests {
             child("B", "B::b0", "1", 2),
         ];
         let selected = vec![0, 1];
-        let mut collapsed_blocks = vec!["A::b0".to_string()];
+        let mut collapsed_blocks = vec!["A::b0".to_string(), "B::b0".to_string()];
 
         expand_blocks_hiding_lit_components(&items, &selected, &mut collapsed_blocks);
 
-        assert_eq!(collapsed_blocks, vec!["A::b0".to_string()]);
+        assert_eq!(collapsed_blocks, vec!["B::b0".to_string()]);
     }
 
     #[test]
