@@ -7,7 +7,8 @@ use crate::ui::orchestrator::widgets::help_copy::{HelpBullet, help_text};
 use crate::ui::orchestrator::widgets::{BtnOpts, redesign_btn};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, ThemePalette, redesign_border_strong,
-    redesign_shell_bg, redesign_text_faint, redesign_text_muted, redesign_text_primary,
+    redesign_page_bg, redesign_shell_bg, redesign_text_faint, redesign_text_muted,
+    redesign_text_primary,
 };
 
 pub(crate) use crate::ui::orchestrator::widgets::help_copy::HelpPage;
@@ -89,18 +90,13 @@ fn wrench_button(ui: &mut egui::Ui, palette: ThemePalette, page: HelpPage) -> eg
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
-        let bg = redesign_shell_bg(palette);
+        let bg = redesign_page_bg(palette);
         let color = if response.hovered() {
             redesign_text_primary(palette)
         } else {
             redesign_text_muted(palette)
         };
         let painter = ui.painter();
-        painter.rect_filled(
-            rect,
-            egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8),
-            bg,
-        );
         painter.circle_stroke(
             rect.center(),
             CIRCLE_RADIUS,
