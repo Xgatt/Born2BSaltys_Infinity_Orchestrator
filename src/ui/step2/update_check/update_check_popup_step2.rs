@@ -57,7 +57,7 @@ pub fn render(
     let modes = popup_modes(state, single_mod_popup_target.is_some());
     let source_load = mod_downloads::load_mod_download_sources();
     let source_choices = collect_source_choices(state, &source_load);
-    let source_edit_rows = collect_source_edit_rows(state);
+    let source_edit_rows = collect_source_edit_rows(state, &source_load);
     let resources = PopupResources {
         single_mod_target: single_mod_popup_target.as_ref(),
         source_choices: &source_choices,

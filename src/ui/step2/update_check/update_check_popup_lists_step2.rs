@@ -390,13 +390,22 @@ pub(super) struct SourceEditRow {
     pub(super) source_id: String,
 }
 
-pub(super) fn collect_source_edit_rows(state: &WizardState) -> Vec<SourceEditRow> {
+pub(super) fn collect_source_edit_rows(
+    state: &WizardState,
+    source_load: &mod_downloads::ModDownloadsLoad,
+) -> Vec<SourceEditRow> {
     let mut rows = Vec::<SourceEditRow>::new();
     for pending in &state.step2.log_pending_downloads {
-        push_source_edit_row(state, &mut rows, &pending.tp_file, &pending.label);
+        push_source_edit_row(
+            state,
+            source_load,
+            &mut rows,
+            &pending.tp_file,
+            &pending.label,
+        );
     }
     for asset in &state.step2.update_selected_update_assets {
-        push_source_edit_row(state, &mut rows, &asset.tp_file, &asset.label);
+        push_source_edit_row(state, source_load, &mut rows, &asset.tp_file, &asset.label);
     }
     for mod_state in state
         .step2
@@ -409,13 +418,14 @@ pub(super) fn collect_source_edit_rows(state: &WizardState) -> Vec<SourceEditRow
         } else {
             mod_state.name.as_str()
         };
-        push_source_edit_row(state, &mut rows, &mod_state.tp_file, label);
+        push_source_edit_row(state, source_load, &mut rows, &mod_state.tp_file, label);
     }
     rows
 }
 
 fn push_source_edit_row(
     state: &WizardState,
+    source_load: &mod_downloads::ModDownloadsLoad,
     rows: &mut Vec<SourceEditRow>,
     tp2: &str,
     label: &str,
@@ -431,12 +441,16 @@ fn push_source_edit_row(
     rows.push(SourceEditRow {
         tp2: tp2.to_string(),
         label: label.to_string(),
-        source_id: state
-            .step2
-            .selected_source_ids
-            .get(&key)
-            .cloned()
-            .unwrap_or_else(|| "primary".to_string()),
+        source_id: source_load
+            .resolve_source(
+                &key,
+                state
+                    .step2
+                    .selected_source_ids
+                    .get(&key)
+                    .map(String::as_str),
+            )
+            .map_or_else(|| "primary".to_string(), |source| source.source_id),
     });
 }
 
@@ -591,5 +605,112 @@ pub(super) fn single_mod_popup_target(state: &WizardState) -> Option<(String, St
             Some((game_tab.clone(), tp_file.clone()))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::Step2ModState;
+
+    const DEFAULT_TOML: &str = r#"
+[[mods]]
+name = "BuffBot"
+tp2 = "buffbot"
+
+  [[mods.sources]]
+  id = "chrizhermann"
+  label = "Chrizhermann"
+  type = "github"
+  url = "https://github.com/Chrizhermann/bg-eeex-buffbot"
+  repo = "Chrizhermann/bg-eeex-buffbot"
+
+  [[mods.sources]]
+  id = "mirror"
+  label = "Mirror"
+  type = "github"
+  url = "https://github.com/example/bg-eeex-buffbot"
+  repo = "example/bg-eeex-buffbot"
+"#;
+
+    fn mod_state(name: &str, tp_file: &str) -> Step2ModState {
+        Step2ModState {
+            name: name.to_string(),
+            tp_file: tp_file.to_string(),
+            tp2_path: format!("/mods/{tp_file}"),
+            readme_path: None,
+            ini_path: None,
+            web_url: None,
+            package_marker: None,
+            latest_checked_version: None,
+            update_locked: false,
+            mod_prompt_summary: None,
+            mod_prompt_events: Vec::new(),
+            checked: false,
+            hidden_components: Vec::new(),
+            components: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn failed_row_uses_the_mods_first_source_id_when_nothing_is_selected() {
+        let source_load = mod_downloads::load_mod_download_sources_from_texts(DEFAULT_TOML, "", "");
+        let mut state = WizardState::default();
+        state
+            .step2
+            .bgee_mods
+            .push(mod_state("BuffBot", "setup-buffbot.tp2"));
+
+        let rows = collect_source_edit_rows(&state, &source_load);
+
+        let row = rows
+            .iter()
+            .find(|row| row.tp2 == "setup-buffbot.tp2")
+            .expect("buffbot row present");
+        assert_eq!(row.source_id, "chrizhermann");
+    }
+
+    #[test]
+    fn failed_row_honours_the_selected_source_id() {
+        let source_load = mod_downloads::load_mod_download_sources_from_texts(DEFAULT_TOML, "", "");
+        let mut state = WizardState::default();
+        state
+            .step2
+            .bgee_mods
+            .push(mod_state("BuffBot", "setup-buffbot.tp2"));
+        state
+            .step2
+            .selected_source_ids
+            .insert("buffbot".to_string(), "mirror".to_string());
+
+        let rows = collect_source_edit_rows(&state, &source_load);
+
+        let row = rows
+            .iter()
+            .find(|row| row.tp2 == "setup-buffbot.tp2")
+            .expect("buffbot row present");
+        assert_eq!(row.source_id, "mirror");
+    }
+
+    #[test]
+    fn failed_row_keeps_primary_when_the_catalog_has_no_source() {
+        let source_load = mod_downloads::load_mod_download_sources_from_texts(DEFAULT_TOML, "", "");
+        let mut state = WizardState::default();
+        state
+            .step2
+            .bgee_mods
+            .push(mod_state("BuffBot", "setup-buffbot.tp2"));
+        state
+            .step2
+            .bgee_mods
+            .push(mod_state("Unknown Mod", "setup-unknown.tp2"));
+
+        let rows = collect_source_edit_rows(&state, &source_load);
+
+        let row = rows
+            .iter()
+            .find(|row| row.tp2 == "setup-unknown.tp2")
+            .expect("unknown row present");
+        assert_eq!(row.source_id, "primary");
     }
 }
