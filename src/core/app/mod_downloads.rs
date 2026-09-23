@@ -70,8 +70,6 @@ struct ModDownloadSourceOverlay {
     pub(crate) source_default: bool,
     #[serde(skip)]
     pub(crate) source_default_explicit: bool,
-    #[serde(rename = "type")]
-    pub(crate) source_type: Option<String>,
     pub(crate) url: Option<String>,
     pub(crate) github: Option<String>,
     pub(crate) exact_github: Option<Vec<String>>,
@@ -92,8 +90,6 @@ struct ModDownloadSourceVariantOverlay {
     pub(crate) label: Option<String>,
     #[serde(default)]
     pub(crate) default: bool,
-    #[serde(rename = "type")]
-    pub(crate) source_type: Option<String>,
     pub(crate) aliases: Option<Vec<String>>,
     pub(crate) config_files: Option<Vec<String>>,
     pub(crate) tp2_rename: Option<ModDownloadTp2Rename>,
@@ -135,8 +131,6 @@ pub(crate) struct ModDownloadSource {
     pub(crate) source_label: String,
     #[serde(default)]
     pub(crate) source_default: bool,
-    #[serde(default)]
-    pub(crate) source_type: Option<String>,
     #[serde(default)]
     pub(crate) url: String,
     #[serde(default)]
@@ -241,10 +235,15 @@ pub(crate) fn ensure_mod_downloads_files() -> io::Result<()> {
     Ok(())
 }
 
+/// Controls which resolution tier pre-fills the source editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SeedScope {
+    /// Pre-fill from the full three-tier resolution (used when editing "For this modlist").
     #[default]
     Resolved,
+    /// Pre-fill from only the two-tier (global + app-default) resolution, ignoring any
+    /// per-modlist overlay. Used when editing "My default" so saving never promotes a
+    /// modlist pin into the global file.
     GlobalOnly,
 }
 
@@ -971,89 +970,12 @@ fn editor_block_for_source(
     merged_source: Option<ModDownloadSource>,
 ) -> String {
     if allow_source_id_change {
-        return existing_user_block.map_or_else(
-            || complete_source_block(&template_source_block(label, source_id), None),
-            |block| complete_source_block(&block, merged_source.as_ref()),
-        );
+        return existing_user_block.unwrap_or_else(|| template_source_block(label, source_id));
     }
     merged_source.map_or_else(
-        || {
-            existing_user_block.map_or_else(
-                || complete_source_block(&template_source_block(label, source_id), None),
-                |block| complete_source_block(&block, None),
-            )
-        },
+        || existing_user_block.unwrap_or_else(|| template_source_block(label, source_id)),
         |source| source_to_editor_block(&source),
     )
-}
-
-const SOURCE_TEMPLATE_FIELDS: &[&str] = &[
-    "id",
-    "label",
-    "type",
-    "url",
-    "repo",
-    "commit",
-    "tag",
-    "branch",
-    "channel",
-    "asset",
-    "pkg_windows",
-    "pkg_linux",
-    "pkg_macos",
-];
-
-pub(crate) fn source_type_label(source: &ModDownloadSource) -> String {
-    let declared = source.source_type.as_deref().unwrap_or("").trim();
-    if !declared.is_empty() {
-        return declared.to_string();
-    }
-    if source.github.is_some() {
-        "github".to_string()
-    } else {
-        "url".to_string()
-    }
-}
-
-fn template_field_fallback_value(source: &ModDownloadSource, key: &str) -> String {
-    match key {
-        "id" => source.source_id.clone(),
-        "label" => source.source_label.clone(),
-        "type" => source_type_label(source),
-        "url" => source.url.clone(),
-        "repo" => source.github.clone().unwrap_or_default(),
-        "commit" => source.commit.clone().unwrap_or_default(),
-        "tag" => source.tag.clone().unwrap_or_default(),
-        "branch" => source.branch.clone().unwrap_or_default(),
-        "channel" => source.channel.clone().unwrap_or_default(),
-        "asset" => source.asset.clone().unwrap_or_default(),
-        "pkg_windows" => source.pkg_windows.clone().unwrap_or_default(),
-        "pkg_linux" => source.pkg_linux.clone().unwrap_or_default(),
-        "pkg_macos" => source.pkg_macos.clone().unwrap_or_default(),
-        _ => String::new(),
-    }
-}
-
-pub(crate) fn complete_source_block(block: &str, fallback: Option<&ModDownloadSource>) -> String {
-    let existing_keys = block
-        .lines()
-        .filter_map(|line| assignment_key(line.trim()).map(str::to_string))
-        .collect::<BTreeSet<String>>();
-    let mut completed = block.trim_end().to_string();
-    for key in SOURCE_TEMPLATE_FIELDS {
-        if existing_keys.contains(*key) {
-            continue;
-        }
-        let value = fallback.map_or_else(String::new, |source| {
-            template_field_fallback_value(source, key)
-        });
-        completed.push('\n');
-        completed.push_str(key);
-        completed.push_str(" = \"");
-        completed.push_str(&escape_toml_string(&value));
-        completed.push('"');
-    }
-    normalize_source_block_indent(&completed)
 }
 
 const SOURCE_BLOCK_FIELD_ORDER: &[&str] = &[
@@ -1125,16 +1047,12 @@ fn source_to_editor_block(source: &ModDownloadSource) -> String {
         "[[mods.sources]]".to_string(),
         format!("id = \"{}\"", escape_toml_string(&source.source_id)),
         format!("label = \"{}\"", escape_toml_string(&source.source_label)),
-        format!(
-            "type = \"{}\"",
-            escape_toml_string(&source_type_label(source))
-        ),
+        "type = \"github\"".to_string(),
         format!("url = \"{}\"", escape_toml_string(&source.url)),
-        format!(
-            "repo = \"{}\"",
-            escape_toml_string(source.github.as_deref().unwrap_or_default())
-        ),
     ];
+    if let Some(github) = source.github.as_ref() {
+        lines.push(format!("repo = \"{}\"", escape_toml_string(github)));
+    }
     for exact_github in &source.exact_github {
         lines.push(format!(
             "exact_github = \"{}\"",
@@ -1185,24 +1103,24 @@ fn source_to_editor_block(source: &ModDownloadSource) -> String {
             escape_toml_string(&tp2_rename.to)
         ));
     }
-    lines.push(format!(
-        "pkg_windows = \"{}\"",
-        escape_toml_string(source.pkg_windows.as_deref().unwrap_or_default())
-    ));
-    lines.push(format!(
-        "pkg_linux = \"{}\"",
-        escape_toml_string(source.pkg_linux.as_deref().unwrap_or_default())
-    ));
-    lines.push(format!(
-        "pkg_macos = \"{}\"",
-        escape_toml_string(source.pkg_macos.as_deref().unwrap_or_default())
-    ));
+    if let Some(pkg_windows) = source.pkg_windows.as_ref() {
+        lines.push(format!(
+            "pkg_windows = \"{}\"",
+            escape_toml_string(pkg_windows)
+        ));
+    }
+    if let Some(pkg_linux) = source.pkg_linux.as_ref() {
+        lines.push(format!("pkg_linux = \"{}\"", escape_toml_string(pkg_linux)));
+    }
+    if let Some(pkg_macos) = source.pkg_macos.as_ref() {
+        lines.push(format!("pkg_macos = \"{}\"", escape_toml_string(pkg_macos)));
+    }
     normalize_source_block_indent(&lines.join("\n"))
 }
 
 fn template_source_block(_label: &str, source_id: &str) -> String {
     format!(
-        "  [[mods.sources]]\n  id = \"{}\"\n  label = \"GitHub\"\n  type = \"github\"\n  url = \"https://github.com/OWNER/REPO\"\n  repo = \"OWNER/REPO\"\n  commit = \"\"\n  tag = \"\"\n  branch = \"\"\n  channel = \"\"\n  asset = \"\"\n  pkg_windows = \"\"\n  pkg_linux = \"\"\n  pkg_macos = \"\"\n  default = true",
+        "  [[mods.sources]]\n  id = \"{}\"\n  label = \"GitHub\"\n  type = \"github\"\n  url = \"https://github.com/OWNER/REPO\"\n  repo = \"OWNER/REPO\"\n  commit = \"\"\n  tag = \"\"\n  branch = \"\"\n  channel = \"\"\n  asset = \"\"\n  default = true",
         escape_toml_string(source_id.trim())
     )
 }
@@ -1358,6 +1276,7 @@ fn overlay_source_key(source: &ModDownloadSourceOverlay) -> String {
     format!("{tp2}|{source_id}")
 }
 
+/// Returns true when the overlay specifies at least one version selector field.
 const fn overlay_has_version_selector(overlay: &ModDownloadSourceOverlay) -> bool {
     overlay.commit.is_some()
         || overlay.tag.is_some()
@@ -1366,6 +1285,7 @@ const fn overlay_has_version_selector(overlay: &ModDownloadSourceOverlay) -> boo
         || overlay.asset.is_some()
 }
 
+/// Clears all version selector fields on a source so a per-modlist overlay can replace them.
 fn clear_source_version_selectors(source: &mut ModDownloadSource) {
     source.commit = None;
     source.tag = None;
@@ -1398,9 +1318,6 @@ fn apply_source_overlay(target: &mut ModDownloadSource, overlay: ModDownloadSour
     }
     if overlay.source_default {
         target.source_default = true;
-    }
-    if let Some(source_type) = overlay.source_type {
-        target.source_type = Some(source_type);
     }
     if let Some(url) = overlay.url {
         target.url = url;
@@ -1505,7 +1422,6 @@ fn apply_source_variant_overlay(
         id,
         label,
         default,
-        source_type,
         aliases,
         config_files,
         tp2_rename,
@@ -1531,9 +1447,6 @@ fn apply_source_variant_overlay(
     }
     if default {
         target.source_default = true;
-    }
-    if let Some(source_type) = source_type {
-        target.source_type = Some(source_type);
     }
     if let Some(aliases) = aliases {
         target.aliases = Some(aliases);
@@ -1618,7 +1531,6 @@ fn normalize_source_identity(source: &mut ModDownloadSource) {
     if source.source_label.is_empty() {
         source.source_label = source.source_id.clone();
     }
-    source.source_type = normalize_optional_string(source.source_type.take());
 }
 
 fn normalize_source_location(source: &mut ModDownloadSource) {
@@ -1784,153 +1696,17 @@ mod tests {
     }
 
     #[test]
-    fn source_id_change_editor_completes_existing_user_block_with_blanks() {
+    fn source_id_change_editor_keeps_existing_user_block() {
         let existing = "  [[mods.sources]]\n  id = \"fork\"\n  branch = \"main\"".to_string();
-        let block = editor_block_for_source("Fork", "fork", true, Some(existing), None);
-
-        assert_eq!(
-            block,
-            "  [[mods.sources]]\n  id = \"fork\"\n  label = \"\"\n  type = \"\"\n  url = \"\"\n  repo = \"\"\n  commit = \"\"\n  tag = \"\"\n  branch = \"main\"\n  channel = \"\"\n  asset = \"\"\n  pkg_windows = \"\"\n  pkg_linux = \"\"\n  pkg_macos = \"\""
+        let block = editor_block_for_source(
+            "Fork",
+            "fork",
+            true,
+            Some(existing.clone()),
+            Some(argent77_source()),
         );
-    }
 
-    #[test]
-    fn editor_block_for_a_url_source_lists_the_full_template() {
-        let source = ModDownloadSource {
-            name: "UrlMod".to_string(),
-            tp2: "urlmod".to_string(),
-            source_id: "weasel".to_string(),
-            source_label: "Weasel".to_string(),
-            url: "https://example.com/mod.zip".to_string(),
-            ..Default::default()
-        };
-
-        let block = source_to_editor_block(&source);
-        let keys = block
-            .lines()
-            .filter_map(|line| assignment_key(line.trim()))
-            .collect::<Vec<_>>();
-
-        assert_eq!(keys.as_slice(), SOURCE_TEMPLATE_FIELDS);
-        assert!(block.contains("type = \"url\""));
-        assert!(block.contains("repo = \"\""));
-    }
-
-    #[test]
-    fn completing_a_user_block_fills_missing_fields_from_the_resolved_source() {
-        let user_block =
-            "  [[mods.sources]]\n  id = \"argent77\"\n  label = \"Argent77\"".to_string();
-        let resolved = argent77_source();
-
-        let completed = complete_source_block(&user_block, Some(&resolved));
-
-        assert!(completed.contains("pkg_windows = \"wzp,zip\""));
-    }
-
-    #[test]
-    fn completing_without_a_source_fills_blanks_and_keeps_present_lines() {
-        let user_block = "  [[mods.sources]]\n  id = \"argent77\"\n  branch = \"main\"".to_string();
-
-        let completed = complete_source_block(&user_block, None);
-
-        assert!(completed.contains("id = \"argent77\""));
-        assert!(completed.contains("branch = \"main\""));
-        assert!(completed.contains("pkg_windows = \"\""));
-        assert!(completed.contains("label = \"\""));
-    }
-
-    #[test]
-    fn fork_block_lists_the_full_template() {
-        let fork_block = complete_source_block(
-            "[[mods.sources]]\nid = \"forkuser\"\nlabel = \"forkuser\"\ntype = \"github\"\nurl = \"https://github.com/forkuser/repo\"\nrepo = \"forkuser/repo\"\nbranch = \"main\"",
-            None,
-        );
-        let keys = fork_block
-            .lines()
-            .filter_map(|line| assignment_key(line.trim()))
-            .collect::<Vec<_>>();
-
-        assert_eq!(keys.as_slice(), SOURCE_TEMPLATE_FIELDS);
-        assert!(fork_block.contains("branch = \"main\""));
-    }
-
-    #[test]
-    fn shipped_catalog_blocks_list_the_full_template_in_order() {
-        let content = default_mod_downloads_content();
-        for (start, end) in source_block_ranges(content) {
-            let block = &content[start..end];
-            let keys = block
-                .lines()
-                .filter_map(|line| assignment_key(line.trim()))
-                .filter(|key| SOURCE_TEMPLATE_FIELDS.contains(key))
-                .collect::<Vec<_>>();
-            assert_eq!(
-                keys.as_slice(),
-                SOURCE_TEMPLATE_FIELDS,
-                "block missing or misordered template fields: {block}"
-            );
-        }
-    }
-
-    #[test]
-    fn shipped_catalog_declared_types_survive_resolution() {
-        let content = default_mod_downloads_content();
-        let resolved = load_mod_download_sources_from_texts(content, "", "");
-        for (mod_start, mod_end) in mod_block_ranges(content) {
-            let mod_block = &content[mod_start..mod_end];
-            let Some(tp2) = mod_block.lines().find_map(tp2_value_from_line) else {
-                continue;
-            };
-            let sources_for_tp2 = resolved.find_sources(&tp2);
-            for (start, end) in source_block_ranges(mod_block) {
-                let block = &mod_block[start..end];
-                let Some(id) = block.lines().find_map(source_id_from_line) else {
-                    continue;
-                };
-                let Some(declared_type) = block
-                    .lines()
-                    .find_map(|line| quoted_value_from_assignment(line.trim(), "type"))
-                else {
-                    continue;
-                };
-                let Some(source) = sources_for_tp2.iter().find(|source| {
-                    normalize_source_id(&source.source_id) == normalize_source_id(&id)
-                }) else {
-                    continue;
-                };
-                assert!(
-                    source_type_label(source).eq_ignore_ascii_case(declared_type.trim()),
-                    "declared type {declared_type} did not survive resolution for {tp2}/{id}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn per_list_blank_tag_unpins_the_inherited_tag() {
-        let default_text = "[[mods]]\nname = \"TestMod\"\ntp2 = \"testmod\"\n\n  [[mods.sources]]\n  id = \"main\"\n  label = \"Main\"\n  type = \"github\"\n  url = \"https://github.com/Test/Mod\"\n  repo = \"Test/Mod\"\n  tag = \"v18\"\n";
-        let modlist_text = "[[mods]]\nname = \"TestMod\"\ntp2 = \"testmod\"\n\n  [[mods.sources]]\n  id = \"main\"\n  url = \"https://github.com/Test/Mod\"\n  commit = \"\"\n  tag = \"\"\n  branch = \"\"\n  channel = \"\"\n  asset = \"\"\n  pkg_windows = \"\"\n  pkg_linux = \"\"\n  pkg_macos = \"\"\n";
-
-        let resolved = load_mod_download_sources_from_texts(default_text, "", modlist_text);
-        let source = resolved
-            .resolve_source("testmod", None)
-            .expect("resolved source");
-
-        assert!(source.tag.is_none());
-    }
-
-    #[test]
-    fn full_template_share_block_wins_entirely() {
-        let default_text = "[[mods]]\nname = \"TestMod\"\ntp2 = \"testmod\"\n\n  [[mods.sources]]\n  id = \"main\"\n  label = \"Main\"\n  type = \"github\"\n  url = \"https://github.com/Test/Mod\"\n  repo = \"Test/Mod\"\n  channel = \"releases\"\n  pkg_windows = \"wzp\"\n";
-        let modlist_text = "[[mods]]\nname = \"TestMod\"\ntp2 = \"testmod\"\n\n  [[mods.sources]]\n  id = \"main\"\n  label = \"\"\n  type = \"\"\n  url = \"https://github.com/Test/Mod\"\n  repo = \"\"\n  commit = \"\"\n  tag = \"\"\n  branch = \"\"\n  channel = \"\"\n  asset = \"\"\n  pkg_windows = \"\"\n  pkg_linux = \"\"\n  pkg_macos = \"\"\n";
-
-        let resolved = load_mod_download_sources_from_texts(default_text, "", modlist_text);
-        let source = resolved
-            .resolve_source("testmod", None)
-            .expect("resolved source");
-
-        assert!(source.channel.is_none());
-        assert!(source.pkg_windows.is_none());
+        assert_eq!(block, existing);
     }
 
     // ── Per-modlist ambient tests ──────────────────────────────
@@ -2188,6 +1964,8 @@ mod tests {
 
     #[test]
     fn per_modlist_branch_replaces_global_tag() {
+        // Base: global resolves to tag=v18. Per-modlist says branch=master.
+        // Expected: branch=master wins; tag is gone.
         let mut source = base_source_with_tag("v18");
         let overlay = overlay_with_branch("master");
 
@@ -2208,6 +1986,8 @@ mod tests {
 
     #[test]
     fn per_modlist_tag_replaces_global_commit() {
+        // Base: global resolves to commit=abc123. Per-modlist says tag=v1.0.0.
+        // Expected: tag=v1.0.0 wins; commit is gone.
         let mut source = base_source_with_commit("abc123def456abc123def456abc123def456abc1");
         let overlay = overlay_with_tag("v1.0.0");
 
@@ -2249,6 +2029,8 @@ mod tests {
 
     #[test]
     fn per_modlist_overlay_without_selector_inherits_global_selector() {
+        // Base: global resolves to tag=v18. Per-modlist overlay has no selector (only url).
+        // Expected: tag=v18 is preserved (additive overlay).
         let mut source = base_source_with_tag("v18");
         let overlay = overlay_with_no_selector();
 

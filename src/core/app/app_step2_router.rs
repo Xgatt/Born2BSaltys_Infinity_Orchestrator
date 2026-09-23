@@ -239,16 +239,13 @@ fn add_discovered_mod_download_fork(
 ) {
     let display_name = source_editor_display_name(state, &tp2, &label);
     let source_id = owner_login.trim().to_ascii_lowercase();
-    let source_block = mod_downloads::complete_source_block(
-        &format!(
-            "[[mods.sources]]\nid = \"{}\"\nlabel = \"{}\"\ntype = \"github\"\nurl = \"https://github.com/{}\"\nrepo = \"{}\"\nbranch = \"{}\"",
-            source_id,
-            owner_login.trim(),
-            full_name.trim(),
-            full_name.trim(),
-            default_branch.trim()
-        ),
-        None,
+    let source_block = format!(
+        "[[mods.sources]]\nid = \"{}\"\nlabel = \"{}\"\ntype = \"github\"\nurl = \"https://github.com/{}\"\nrepo = \"{}\"\nbranch = \"{}\"",
+        source_id,
+        owner_login.trim(),
+        full_name.trim(),
+        full_name.trim(),
+        default_branch.trim()
     );
     state.step2.mod_download_source_editor_open = true;
     state.step2.mod_download_source_editor_tp2 = tp2;
