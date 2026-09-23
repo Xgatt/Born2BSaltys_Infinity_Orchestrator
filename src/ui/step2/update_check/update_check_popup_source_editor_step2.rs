@@ -39,7 +39,8 @@ pub(super) fn render_source_editor_popup(
             ui.add(
                 egui::TextEdit::multiline(&mut state.step2.mod_download_source_editor_text)
                     .desired_width(f32::INFINITY)
-                    .desired_rows(16),
+                    .desired_rows(16)
+                    .font(egui::TextStyle::Monospace),
             );
             ui.horizontal_wrapped(|ui| {
                 if redesign_btn(

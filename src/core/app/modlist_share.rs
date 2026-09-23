@@ -1103,16 +1103,16 @@ fn serialize_resolved_source_block(
         "[[mods.sources]]".to_string(),
         format!("id = \"{}\"", escape_for_toml(&source.source_id)),
         format!("label = \"{}\"", escape_for_toml(&source.source_label)),
+        format!(
+            "type = \"{}\"",
+            escape_for_toml(&crate::app::mod_downloads::source_type_label(source))
+        ),
+        format!("url = \"{}\"", escape_for_toml(&source.url)),
+        format!(
+            "repo = \"{}\"",
+            escape_for_toml(source.github.as_deref().unwrap_or_default())
+        ),
     ];
-
-    if let Some(github) = source.github.as_ref() {
-        lines.push("type = \"github\"".to_string());
-        lines.push(format!("url = \"{}\"", escape_for_toml(&source.url)));
-        lines.push(format!("repo = \"{}\"", escape_for_toml(github)));
-    } else if !source.url.is_empty() {
-        lines.push("type = \"url\"".to_string());
-        lines.push(format!("url = \"{}\"", escape_for_toml(&source.url)));
-    }
 
     if !source.exact_github.is_empty() {
         let items = source
@@ -1123,18 +1123,38 @@ fn serialize_resolved_source_block(
             .join(", ");
         lines.push(format!("exact_github = [{items}]"));
     }
-    if let Some(tag) = source.tag.as_ref().filter(|s| !s.is_empty()) {
-        lines.push(format!("tag = \"{}\"", escape_for_toml(tag)));
-    }
-    if let Some(commit) = source.commit.as_ref().filter(|s| !s.is_empty()) {
-        lines.push(format!("commit = \"{}\"", escape_for_toml(commit)));
-    }
-    if let Some(branch) = source.branch.as_ref().filter(|s| !s.is_empty()) {
-        lines.push(format!("branch = \"{}\"", escape_for_toml(branch)));
-    }
-    if let Some(channel) = source.channel.as_ref().filter(|s| !s.is_empty()) {
-        lines.push(format!("channel = \"{}\"", escape_for_toml(channel)));
-    }
+    lines.push(format!(
+        "commit = \"{}\"",
+        escape_for_toml(source.commit.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "tag = \"{}\"",
+        escape_for_toml(source.tag.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "branch = \"{}\"",
+        escape_for_toml(source.branch.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "channel = \"{}\"",
+        escape_for_toml(source.channel.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "asset = \"{}\"",
+        escape_for_toml(source.asset.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "pkg_windows = \"{}\"",
+        escape_for_toml(source.pkg_windows.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "pkg_linux = \"{}\"",
+        escape_for_toml(source.pkg_linux.as_deref().unwrap_or_default())
+    ));
+    lines.push(format!(
+        "pkg_macos = \"{}\"",
+        escape_for_toml(source.pkg_macos.as_deref().unwrap_or_default())
+    ));
 
     lines
         .iter()
@@ -1532,13 +1552,55 @@ mod tests {
 
         assert!(block.contains("url = \""), "url source must emit url field");
         assert!(
-            !block.contains("repo = \""),
-            "url source must not emit repo field"
+            block.contains("repo = \"\""),
+            "url source must emit a blank repo field, not omit it"
         );
 
         let wrapped = format!("[[mods]]\nname = \"U\"\ntp2 = \"u\"\n\n{block}");
         let parsed = toml::from_str::<crate::app::mod_downloads::ModDownloadsFile>(&wrapped);
         assert!(parsed.is_ok(), "url source block must round-trip");
+    }
+
+    #[test]
+    fn share_block_lists_the_full_template_with_values() {
+        let source = crate::app::mod_downloads::ModDownloadSource {
+            name: "TestMod".to_string(),
+            tp2: "testmod".to_string(),
+            source_id: "main".to_string(),
+            source_label: "Main".to_string(),
+            url: "https://github.com/Test/Mod".to_string(),
+            github: Some("Test/Mod".to_string()),
+            asset: Some("Mod-v1.zip".to_string()),
+            pkg_windows: Some("wzp,zip".to_string()),
+            ..Default::default()
+        };
+
+        let block = serialize_resolved_source_block(&source);
+
+        for field in [
+            "id",
+            "label",
+            "type",
+            "url",
+            "repo",
+            "commit",
+            "tag",
+            "branch",
+            "channel",
+            "asset",
+            "pkg_windows",
+            "pkg_linux",
+            "pkg_macos",
+        ] {
+            assert!(
+                block
+                    .lines()
+                    .any(|line| line.trim().starts_with(&format!("{field} = "))),
+                "missing {field} in {block}"
+            );
+        }
+        assert!(block.contains("asset = \"Mod-v1.zip\""));
+        assert!(block.contains("pkg_windows = \"wzp,zip\""));
     }
 
     fn default_tier_toml(tp2: &str, url: &str) -> String {
@@ -1875,7 +1937,7 @@ mod tests {
         );
         let block = serialize_resolved_source_block(&source);
         assert!(block.contains("commit = \"7649ced6cd25865874d787ec1a9abbc67b068729\""));
-        assert!(!block.contains("branch = "));
+        assert!(block.contains("branch = \"\""));
     }
 
     #[test]

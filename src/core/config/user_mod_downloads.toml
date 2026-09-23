@@ -14,11 +14,15 @@ tp2 = "examplemod"
   type = "github"
   url = "https://github.com/ExampleUser/ExampleMod"
   repo = "ExampleUser/ExampleMod"
-  default = true
+  commit = ""
+  tag = ""
+  branch = ""
   channel = "releases"
+  asset = ""
   pkg_windows = "wzp,zip"
   pkg_linux = "lin,zip"
   pkg_macos = "mac,zip"
+  default = true
 
 # BIO download cheat sheet
 
