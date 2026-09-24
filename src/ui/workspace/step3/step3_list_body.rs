@@ -458,12 +458,7 @@ fn render_header_row(
                 let parent_placeholder = ctx.items[idx].parent_placeholder;
                 let title =
                     build_parent_title(&mod_name, parent_placeholder, child_count, is_locked);
-                row_resp = Some(selectable_row(
-                    ui,
-                    ctx.palette,
-                    ctx.selected.contains(&idx),
-                    strong(title),
-                ));
+                row_resp = Some(ui.selectable_label(ctx.selected.contains(&idx), strong(title)));
 
                 if let Some(ref v) = mod_version {
                     ui.add_space(GLYPH_GAP_PX);
