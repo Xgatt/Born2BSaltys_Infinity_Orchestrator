@@ -71,6 +71,21 @@ mod accessors {
         }
 
         #[must_use]
+        pub const fn output_revision(&self) -> u64 {
+            self.output_revision
+        }
+
+        #[must_use]
+        pub const fn important_revision(&self) -> u64 {
+            self.important_revision
+        }
+
+        #[must_use]
+        pub const fn installed_revision(&self) -> u64 {
+            self.installed_revision
+        }
+
+        #[must_use]
         pub fn current_scripted_component_key(&self) -> Option<String> {
             self.current_component_key.clone()
         }
@@ -119,6 +134,9 @@ mod buffers {
             self.warning_capture.active = false;
             self.warning_capture.lines = 0;
             self.events.has_new_data = true;
+            self.output_revision = self.output_revision.wrapping_add(1);
+            self.important_revision = self.important_revision.wrapping_add(1);
+            self.installed_revision = self.installed_revision.wrapping_add(1);
         }
 
         pub fn append_marker(&mut self, text: &str) {
@@ -137,6 +155,17 @@ mod buffers {
                     .map_or(0, |(idx, _)| idx);
                 self.output_buffer.drain(..byte_idx);
             }
+            self.output_revision = self.output_revision.wrapping_add(1);
+        }
+
+        pub(in crate::app::terminal) fn push_important(&mut self, text: &str) {
+            self.important_buffer.push_str(text);
+            self.important_revision = self.important_revision.wrapping_add(1);
+        }
+
+        pub(in crate::app::terminal) fn push_installed(&mut self, text: &str) {
+            self.installed_buffer.push_str(text);
+            self.installed_revision = self.installed_revision.wrapping_add(1);
         }
 
         pub(in crate::app::terminal) fn update_boundary_events(&mut self, new_text: &str) {
@@ -210,8 +239,7 @@ mod capture {
                             self.prompt_capture.lines = 0;
                             self.prompt_capture.after_send = false;
                         }
-                        self.important_buffer.push_str(sub);
-                        self.important_buffer.push('\n');
+                        self.push_important(&format!("{sub}\n"));
                         self.prompt_capture.lines = self.prompt_capture.lines.saturating_add(1);
                         if analyze::prompt_capture_end(sub) || self.prompt_capture.lines >= 5000 {
                             self.prompt_capture.active = false;
@@ -228,8 +256,7 @@ mod capture {
                             self.warning_capture.active = false;
                             self.warning_capture.lines = 0;
                         } else {
-                            self.important_buffer.push_str(sub);
-                            self.important_buffer.push('\n');
+                            self.push_important(&format!("{sub}\n"));
                             self.warning_capture.lines =
                                 self.warning_capture.lines.saturating_add(1);
                             continue;
@@ -239,12 +266,10 @@ mod capture {
                         self.prompt_capture.after_send = false;
                     }
                     if analyze::important_line(sub) {
-                        self.important_buffer.push_str(sub);
-                        self.important_buffer.push('\n');
+                        self.push_important(&format!("{sub}\n"));
                     }
                     if analyze::installed_line(sub) {
-                        self.installed_buffer.push_str(sub);
-                        self.installed_buffer.push('\n');
+                        self.push_installed(&format!("{sub}\n"));
                     }
                 }
             }
@@ -256,5 +281,57 @@ mod capture {
             .replace("\\r\\n", "\n")
             .replace("\\n", "\n")
             .replace("\\r", "\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::EmbeddedTerminal;
+
+    #[test]
+    fn output_revision_moves_when_capped_buffer_is_full() {
+        let mut term = EmbeddedTerminal::new().expect("terminal");
+        term.max_buffer_chars = 10;
+        term.append_output("01234567890123456789");
+        let revision_before = term.output_revision();
+        let len_before = term.output_len();
+        term.append_output("abcde");
+        assert_eq!(term.output_len(), len_before);
+        assert_ne!(term.output_revision(), revision_before);
+    }
+
+    #[test]
+    fn output_revision_moves_on_clear() {
+        let mut term = EmbeddedTerminal::new().expect("terminal");
+        term.append_output("hello");
+        let output_before = term.output_revision();
+        let important_before = term.important_revision();
+        let installed_before = term.installed_revision();
+        term.clear_console();
+        assert_ne!(term.output_revision(), output_before);
+        assert_ne!(term.important_revision(), important_before);
+        assert_ne!(term.installed_revision(), installed_before);
+    }
+
+    #[test]
+    fn installed_revision_moves_on_installed_line() {
+        let mut term = EmbeddedTerminal::new().expect("terminal");
+        let revision_before = term.installed_revision();
+        term.update_important_lines("SUCCESSFULLY INSTALLED\n");
+        assert_ne!(term.installed_revision(), revision_before);
+    }
+
+    #[test]
+    fn filtered_revisions_quiet_on_plain_output() {
+        let mut term = EmbeddedTerminal::new().expect("terminal");
+        let important_before = term.important_revision();
+        let installed_before = term.installed_revision();
+        term.update_important_lines("just a plain line of output\n");
+        term.append_output("just a plain line of output\n");
+        let output_before = term.output_revision();
+        term.append_output("more plain output\n");
+        assert_eq!(term.important_revision(), important_before);
+        assert_eq!(term.installed_revision(), installed_before);
+        assert_ne!(term.output_revision(), output_before);
     }
 }

@@ -134,8 +134,8 @@ mod lifecycle {
                     .join(" ")
             );
             self.append_output(&command_line);
-            self.important_buffer.push_str(&command_line);
-            self.installed_buffer.push_str(&command_line);
+            self.push_important(&command_line);
+            self.push_installed(&command_line);
             Ok(())
         }
 
@@ -236,9 +236,7 @@ mod lifecycle {
 
         pub(in crate::app::terminal) fn record_runtime_error(&mut self, message: String) {
             self.append_output(&format!("\n[terminal] {message}\n"));
-            self.important_buffer.push_str("[terminal] ");
-            self.important_buffer.push_str(&message);
-            self.important_buffer.push('\n');
+            self.push_important(&format!("[terminal] {message}\n"));
             self.events.has_new_data = true;
             self.last_runtime_error = Some(message);
         }

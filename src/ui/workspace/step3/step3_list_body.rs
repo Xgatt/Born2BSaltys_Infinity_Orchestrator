@@ -29,6 +29,7 @@ use crate::ui::step3::move_selection_step3::{
 };
 use crate::ui::step3::service_step3;
 use crate::ui::step3::state_step3;
+use crate::ui::workspace::widgets::weidu_line;
 
 const MOVE_LOCKED_NOTICE: &str = "Locked mods cannot be moved. Unlock them first.";
 
@@ -457,7 +458,12 @@ fn render_header_row(
                 let parent_placeholder = ctx.items[idx].parent_placeholder;
                 let title =
                     build_parent_title(&mod_name, parent_placeholder, child_count, is_locked);
-                row_resp = Some(ui.selectable_label(ctx.selected.contains(&idx), strong(title)));
+                row_resp = Some(selectable_row(
+                    ui,
+                    ctx.palette,
+                    ctx.selected.contains(&idx),
+                    strong(title),
+                ));
 
                 if let Some(ref v) = mod_version {
                     ui.add_space(GLYPH_GAP_PX);
@@ -556,6 +562,28 @@ fn toggle_locked(locked_blocks: &mut Vec<String>, block_id: &str, is_locked: &mu
     }
 }
 
+const fn selected_row_fill(palette: ThemePalette) -> Option<egui::Color32> {
+    match palette {
+        ThemePalette::Dark => Some(egui::Color32::from_rgb(16, 46, 44)),
+        ThemePalette::Light => None,
+    }
+}
+
+fn selectable_row(
+    ui: &mut egui::Ui,
+    palette: ThemePalette,
+    selected: bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.scope(|ui| {
+        if selected && let Some(fill) = selected_row_fill(palette) {
+            ui.visuals_mut().selection.bg_fill = fill;
+        }
+        ui.selectable_label(selected, text)
+    })
+    .inner
+}
+
 #[must_use]
 fn render_child_row(
     ui: &mut egui::Ui,
@@ -579,8 +607,8 @@ fn render_child_row(
         render_lineno(ui, ctx.palette, child_counter, lineno_w);
 
         let text = format_step3::format_step3_item(&ctx.items[idx]);
-        let row_text = format_step3::weidu_colored_widget_text(ui, &text);
-        let resp = ui.selectable_label(ctx.selected.contains(&idx), row_text);
+        let row_text = weidu_line::weidu_widget_text(ui, ctx.palette, &text);
+        let resp = selectable_row(ui, ctx.palette, ctx.selected.contains(&idx), row_text);
 
         if let Some(marker) = compat_marker {
             render_compat_pill(ui, &ctx.items[idx], marker, acc, ctx.palette);
@@ -1180,6 +1208,57 @@ fn paint_insert_marker_full_width(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_row_fill_is_dark_teal_on_dark_and_default_on_light() {
+        assert_eq!(
+            selected_row_fill(ThemePalette::Dark),
+            Some(egui::Color32::from_rgb(16, 46, 44))
+        );
+        assert_eq!(selected_row_fill(ThemePalette::Light), None);
+    }
+
+    fn painted_rect_fills(palette: ThemePalette, selected: bool) -> (Vec<egui::Color32>, bool) {
+        let ctx = egui::Context::default();
+        let mut fill_leaked = false;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let before = ui.visuals().selection.bg_fill;
+                let _ = selectable_row(ui, palette, selected, "row");
+                fill_leaked = ui.visuals().selection.bg_fill != before;
+            });
+        });
+        let fills = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) => Some(rect.fill),
+                _ => None,
+            })
+            .collect();
+        (fills, fill_leaked)
+    }
+
+    #[test]
+    fn selectable_row_paints_dark_teal_band_when_selected_on_dark() {
+        let (fills, leaked) = painted_rect_fills(ThemePalette::Dark, true);
+        assert!(fills.contains(&egui::Color32::from_rgb(16, 46, 44)));
+        assert!(!leaked);
+    }
+
+    #[test]
+    fn selectable_row_keeps_shared_band_on_light() {
+        let (fills, leaked) = painted_rect_fills(ThemePalette::Light, true);
+        assert!(!fills.contains(&egui::Color32::from_rgb(16, 46, 44)));
+        assert!(!leaked);
+    }
+
+    #[test]
+    fn selectable_row_paints_no_band_when_unselected() {
+        let (fills, leaked) = painted_rect_fills(ThemePalette::Dark, false);
+        assert!(!fills.contains(&egui::Color32::from_rgb(16, 46, 44)));
+        assert!(!leaked);
+    }
 
     #[test]
     fn completed_move_marks_the_draft_unsaved_without_a_toast() {

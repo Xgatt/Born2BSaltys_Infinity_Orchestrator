@@ -8,8 +8,8 @@ use crate::ui::orchestrator::widgets::dialogs::confirm_dialog::{self, ConfirmOut
 use crate::ui::orchestrator::widgets::{BtnOpts, redesign_btn};
 use crate::ui::shared::redesign_tokens::{
     REDESIGN_BORDER_RADIUS_U8, REDESIGN_BORDER_WIDTH_PX, REDESIGN_SHELL_BORDER_WIDTH_PX,
-    ThemePalette, WORKSPACE_CONTENT_TEXT_INSET, redesign_border_strong, redesign_shell_bg,
-    redesign_text_muted, redesign_text_primary,
+    ThemePalette, WORKSPACE_CONTENT_TEXT_INSET, redesign_accent, redesign_border_strong,
+    redesign_shell_bg, redesign_text_muted, redesign_text_primary,
 };
 use crate::ui::shared::tab_open_seam::paint_active_tab_seam_cover;
 use crate::ui::step2::action_step2::Step2Action;
@@ -53,7 +53,11 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<S
     }
 
     let details_open = orchestrator.workspace_view.step2.details_open;
-    let panes = Step2PaneRects::from_content(rects.content, details_open);
+    let preferred_details_w = orchestrator
+        .redesign_settings
+        .step2_details_width
+        .map(f32::from);
+    let panes = Step2PaneRects::from_content(rects.content, details_open, preferred_details_w);
 
     ui.painter().rect_filled(
         panes.left,
@@ -90,6 +94,10 @@ pub fn render(ui: &mut egui::Ui, orchestrator: &mut OrchestratorApp) -> Option<S
             );
         });
         paint_details_panel_border(ui, palette, right_rect);
+    }
+
+    if let Some(gap) = panes.splitter {
+        render_details_splitter(ui, orchestrator, palette, rects.content, gap);
     }
 
     sync_details_selection(orchestrator);
@@ -149,23 +157,33 @@ impl Step2LayoutRects {
 struct Step2PaneRects {
     left: egui::Rect,
     right: Option<egui::Rect>,
+    splitter: Option<egui::Rect>,
 }
 
 impl Step2PaneRects {
-    fn from_content(content: egui::Rect, details_open: bool) -> Self {
+    fn from_content(
+        content: egui::Rect,
+        details_open: bool,
+        preferred_details_w: Option<f32>,
+    ) -> Self {
         if !details_open {
             return Self {
                 left: content,
                 right: None,
+                splitter: None,
             };
         }
         let usable_w = (content.width() - GRID_GAP).max(0.0);
-        let right_w = if usable_w >= LEFT_MIN_W + DETAILS_MIN_W {
-            DETAILS_W.min(usable_w - LEFT_MIN_W).max(DETAILS_MIN_W)
+        let (right_w, splitter_allowed) = if usable_w >= LEFT_MIN_W + DETAILS_MIN_W {
+            let right_w = preferred_details_w.map_or_else(
+                || DETAILS_W.min(usable_w - LEFT_MIN_W).max(DETAILS_MIN_W),
+                |w| clamp_details_width(w, usable_w),
+            );
+            (right_w, true)
         } else {
             let max_right_w = usable_w.min(DETAILS_W);
             let min_right_w = DETAILS_MIN_W.min(max_right_w);
-            (usable_w * 0.56).clamp(min_right_w, max_right_w)
+            ((usable_w * 0.56).clamp(min_right_w, max_right_w), false)
         };
         let left_w = (content.width() - GRID_GAP - right_w).max(0.0);
         let left = egui::Rect::from_min_size(content.min, egui::vec2(left_w, content.height()));
@@ -173,11 +191,61 @@ impl Step2PaneRects {
             egui::pos2(left.right() + GRID_GAP, content.top()),
             egui::vec2(right_w, content.height()),
         );
+        let splitter = splitter_allowed.then(|| {
+            egui::Rect::from_min_max(
+                egui::pos2(left.right(), content.top()),
+                egui::pos2(right.left(), content.bottom()),
+            )
+        });
         Self {
             left,
             right: Some(right),
+            splitter,
         }
     }
+}
+
+fn clamp_details_width(preferred: f32, usable_w: f32) -> f32 {
+    preferred.clamp(DETAILS_MIN_W, usable_w - LEFT_MIN_W)
+}
+
+fn render_details_splitter(
+    ui: &egui::Ui,
+    orchestrator: &mut OrchestratorApp,
+    palette: ThemePalette,
+    content: egui::Rect,
+    gap: egui::Rect,
+) {
+    let resp = ui.interact(
+        gap,
+        ui.id().with("workspace_step2_details_splitter"),
+        egui::Sense::click_and_drag(),
+    );
+
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+
+    if resp.double_clicked() {
+        orchestrator.redesign_settings.step2_details_width = None;
+    } else if resp.dragged()
+        && let Some(pointer) = ui.ctx().pointer_latest_pos()
+    {
+        let usable_w = (content.width() - GRID_GAP).max(0.0);
+        let new_w = clamp_details_width(content.right() - pointer.x - GRID_GAP / 2.0, usable_w);
+        if let Some(width) = crate::ui::shared::numeric::u16_from_f32(new_w) {
+            orchestrator.redesign_settings.step2_details_width = Some(width);
+        }
+    }
+
+    let grip_color = if resp.hovered() || resp.dragged() {
+        redesign_accent(palette)
+    } else {
+        redesign_border_strong(palette)
+    };
+    let grip_rect = egui::Rect::from_center_size(gap.center(), egui::vec2(2.0, 32.0));
+    ui.painter()
+        .rect_filled(grip_rect, egui::CornerRadius::same(1), grip_color);
 }
 
 const HELP_TITLE: &str = "Adding mods to this modlist";
@@ -459,5 +527,65 @@ fn render_global_mods_scan_confirm(
             None
         }
         ConfirmOutcome::Pending => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.01
+    }
+
+    fn content_rect(width: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, 400.0))
+    }
+
+    #[test]
+    fn details_default_width_unchanged_without_preference() {
+        let panes = Step2PaneRects::from_content(content_rect(1400.0), true, None);
+        let right = panes.right.expect("details open");
+        assert!(approx_eq(right.width(), 560.0));
+        assert!(panes.splitter.is_some());
+    }
+
+    #[test]
+    fn details_width_follows_preference() {
+        let panes = Step2PaneRects::from_content(content_rect(1400.0), true, Some(700.0));
+        let right = panes.right.expect("details open");
+        assert!(approx_eq(right.width(), 700.0));
+    }
+
+    #[test]
+    fn details_width_clamps_to_minimum() {
+        let panes = Step2PaneRects::from_content(content_rect(1400.0), true, Some(100.0));
+        let right = panes.right.expect("details open");
+        assert!(approx_eq(right.width(), DETAILS_MIN_W));
+    }
+
+    #[test]
+    fn details_width_keeps_tree_minimum() {
+        let panes = Step2PaneRects::from_content(content_rect(1400.0), true, Some(5000.0));
+        let right = panes.right.expect("details open");
+        assert!(approx_eq(right.width(), 1400.0 - GRID_GAP - LEFT_MIN_W));
+    }
+
+    #[test]
+    fn narrow_content_ignores_preference_and_has_no_splitter() {
+        let with_preference = Step2PaneRects::from_content(content_rect(800.0), true, Some(700.0));
+        let without_preference = Step2PaneRects::from_content(content_rect(800.0), true, None);
+        assert!(approx_eq(
+            with_preference.right.expect("details open").width(),
+            without_preference.right.expect("details open").width(),
+        ));
+        assert!(with_preference.splitter.is_none());
+    }
+
+    #[test]
+    fn closed_details_has_no_splitter() {
+        let panes = Step2PaneRects::from_content(content_rect(1400.0), false, Some(700.0));
+        assert!(panes.splitter.is_none());
+        assert!(panes.right.is_none());
     }
 }
