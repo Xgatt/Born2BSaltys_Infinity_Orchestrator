@@ -25,9 +25,10 @@ The BIO build embeds every folder's `entry.json`, `modlist.biolist` and `cover.p
 | `description` | card text and the Details page description | 1 to 500 characters |
 | `tags` | pills on the card, searchable | up to 6, each up to 20 characters |
 | `game` | `BGEE`, `BG2EE`, `IWDEE` or `EET` | must match the game inside the modlist file |
-| `featured` | shows first and passes the "Featured only" filter | true or false |
+| `featured` | shows first among entries with the same `order`, and passes the "Featured only" filter | true or false |
 | `version` | the list's own version, shown on Details | free text, 1 to 20 characters |
 | `requirements` | optional; the "Requires" fact on Details | when absent, the game's default sentence is used |
+| `order` | optional; the card's position in the gallery | a whole number, default 0; lower comes first; entries with the same order show featured first, then by name |
 
 ## Workflow
 

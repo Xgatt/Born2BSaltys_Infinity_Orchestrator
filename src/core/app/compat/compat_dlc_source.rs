@@ -69,6 +69,18 @@ pub(crate) fn invalidate_source_check(step1: &mut Step1State) {
 }
 
 #[must_use]
+pub(crate) fn probed_game_version(
+    step1: &Step1State,
+    folder: &str,
+) -> Option<crate::app::game_version::GameVersion> {
+    step1
+        .dlc_source_check
+        .probes
+        .get(folder.trim())
+        .and_then(|probe| probe.report.game_version)
+}
+
+#[must_use]
 pub(crate) fn bgee_source_for<'a>(step1: &'a Step1State, game: &str) -> &'a str {
     if game == "EET" {
         let plain = step1.bgee_game_folder.trim();

@@ -35,6 +35,8 @@ pub(crate) struct EntryMeta {
     pub(crate) version: String,
     #[serde(default)]
     pub(crate) requirements: Option<String>,
+    #[serde(default)]
+    pub(crate) order: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +57,7 @@ pub(crate) struct IndexEntry {
     pub(crate) requirements: Option<String>,
     pub(crate) biolist: String,
     pub(crate) cover: Option<String>,
+    pub(crate) order: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +73,8 @@ pub struct FeedEntry {
     pub requirements: String,
     pub code: String,
     pub cover_png: Option<Vec<u8>>,
+    pub game_version: Option<String>,
+    pub order: i32,
 }
 
 #[must_use]
@@ -181,6 +186,7 @@ pub(crate) fn index_entry_from_meta(folder: &str, meta: EntryMeta, has_cover: bo
         requirements: meta.requirements,
         biolist: format!("{folder}/modlist.biolist"),
         cover: has_cover.then(|| format!("{folder}/cover.png")),
+        order: meta.order,
     }
 }
 
@@ -240,6 +246,7 @@ pub(crate) fn entries_from_index<'a>(
             Some(requirements) if !requirements.is_empty() => requirements,
             _ => requirements_for(game).to_string(),
         };
+        let game_version = preview.game_version.clone();
         result.push(FeedEntry {
             id: entry.id,
             name: entry.name,
@@ -252,10 +259,12 @@ pub(crate) fn entries_from_index<'a>(
             requirements,
             code,
             cover_png,
+            game_version,
+            order: entry.order,
         });
     }
 
-    result.sort_by_key(|entry| (!entry.featured, entry.name.to_lowercase()));
+    result.sort_by_key(|entry| (entry.order, !entry.featured, entry.name.to_lowercase()));
 
     result
 }
@@ -281,6 +290,7 @@ mod tests {
             requirements: None,
             biolist: biolist.to_string(),
             cover: None,
+            order: 0,
         }
     }
 
@@ -630,6 +640,72 @@ mod tests {
     }
 
     #[test]
+    fn entries_from_index_sorts_by_order_then_featured_then_name() {
+        let code = valid_code();
+        let biolist_bytes = build_biolist(&code).expect("build biolist");
+        let mut files = HashMap::new();
+        files.insert("entries/one.biolist".to_string(), biolist_bytes);
+        let mut entry_a = entry("a-entry", "A", true, "EET", "entries/one.biolist");
+        entry_a.order = 1;
+        let mut entry_z = entry("z-entry", "Z", true, "EET", "entries/one.biolist");
+        entry_z.order = 0;
+        let mut entry_b = entry("b-entry", "B", false, "EET", "entries/one.biolist");
+        entry_b.order = 0;
+        let index = IndexFile {
+            entries: vec![entry_a, entry_z, entry_b],
+        };
+        let result = entries_from_index(index, &resolver(&files));
+        let names: Vec<&str> = result.iter().map(|entry| entry.name.as_str()).collect();
+        assert_eq!(names, vec!["Z", "B", "A"]);
+    }
+
+    #[test]
+    fn feed_entry_carries_the_codes_game_version() {
+        let tagged_json = r#"{
+            "format_version": 1,
+            "bio_version": "0.1.0-test",
+            "game_install": "EET",
+            "game_version": "2.6",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "bgee": "~MOD\\MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#;
+        let tagged_code =
+            crate::app::modlist_share::encode_share_payload_text(tagged_json).expect("encode");
+        let biolist_bytes = build_biolist(&tagged_code).expect("build biolist");
+        let mut files = HashMap::new();
+        files.insert("entries/tagged.biolist".to_string(), biolist_bytes);
+        let index = IndexFile {
+            entries: vec![entry(
+                "tagged-entry",
+                "Tagged",
+                true,
+                "EET",
+                "entries/tagged.biolist",
+            )],
+        };
+        let result = entries_from_index(index, &resolver(&files));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].game_version.as_deref(), Some("2.6"));
+
+        let untagged_code = valid_code();
+        let untagged_bytes = build_biolist(&untagged_code).expect("build biolist");
+        let mut untagged_files = HashMap::new();
+        untagged_files.insert("entries/one.biolist".to_string(), untagged_bytes);
+        let untagged_index = IndexFile {
+            entries: vec![entry(
+                "untagged-entry",
+                "Untagged",
+                true,
+                "EET",
+                "entries/one.biolist",
+            )],
+        };
+        let untagged_result = entries_from_index(untagged_index, &resolver(&untagged_files));
+        assert_eq!(untagged_result.len(), 1);
+        assert_eq!(untagged_result[0].game_version, None);
+    }
+
+    #[test]
     fn requirements_fall_back_to_the_game_default_when_absent() {
         let code = valid_code();
         let biolist_bytes = build_biolist(&code).expect("build biolist");
@@ -654,6 +730,7 @@ mod tests {
             featured: true,
             version: "1.0.0".to_string(),
             requirements: None,
+            order: 0,
         };
         let with_cover = index_entry_from_meta("an-id", meta.clone(), true);
         assert_eq!(with_cover.biolist, "an-id/modlist.biolist");

@@ -74,7 +74,7 @@ fn gallery_stage(
     step1: &crate::app::state::Step1State,
     notification_manager: &mut NotificationManager,
 ) -> Option<InstallRequest> {
-    match stage_gallery::render(ui, palette, state) {
+    match stage_gallery::render(ui, palette, state, step1) {
         GalleryOutcome::OpenPaste => Some(open_paste_from_gallery(state)),
         GalleryOutcome::OpenFile => open_file_from_gallery(state, step1, notification_manager),
         GalleryOutcome::OpenDetails(id) => {

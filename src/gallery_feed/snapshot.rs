@@ -93,13 +93,21 @@ mod tests {
         folders.sort_unstable();
         assert!(!folders.is_empty());
         assert_eq!(ids, folders);
-        let order_keys: Vec<(bool, String)> = entries
+        let order_keys: Vec<(i32, bool, String)> = entries
             .iter()
-            .map(|entry| (!entry.featured, entry.name.to_lowercase()))
+            .map(|entry| (entry.order, !entry.featured, entry.name.to_lowercase()))
             .collect();
         let mut sorted_keys = order_keys.clone();
         sorted_keys.sort();
         assert_eq!(order_keys, sorted_keys);
+        assert_eq!(
+            entries.first().expect("gallery is non-empty").id,
+            "eet-plus-fixes"
+        );
+        assert_eq!(
+            entries.last().expect("gallery is non-empty").id,
+            "born2bsalty-personal-modlist"
+        );
         for entry in entries {
             assert!(
                 preview_modlist_share_code(&entry.code).is_ok(),

@@ -3,6 +3,8 @@
 
 use eframe::egui;
 
+use crate::app::game_version::{InstallBlock, install_block_cached};
+use crate::app::state::Step1State;
 use crate::gallery_feed::index::FeedEntry;
 use crate::registry::model::Game;
 use crate::ui::install::gallery::card_art;
@@ -14,7 +16,8 @@ use crate::ui::orchestrator::widgets::{
     redesign_text_input, render_pill, render_screen_title,
 };
 use crate::ui::shared::redesign_tokens::{
-    ThemePalette, redesign_input_bg, redesign_shell_bg, redesign_text_faint, redesign_text_muted,
+    REDESIGN_BORDER_RADIUS_U8, ThemePalette, redesign_input_bg, redesign_pill_text,
+    redesign_pill_warn, redesign_shell_bg, redesign_text_faint, redesign_text_muted,
     redesign_text_primary,
 };
 
@@ -36,6 +39,7 @@ pub fn render(
     ui: &mut egui::Ui,
     palette: ThemePalette,
     state: &mut InstallScreenState,
+    step1: &Step1State,
 ) -> GalleryOutcome {
     let mut outcome = GalleryOutcome::Stay;
 
@@ -89,7 +93,7 @@ pub fn render(
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            if let Some(id) = card_grid(ui, palette, &visible) {
+            if let Some(id) = card_grid(ui, palette, &visible, step1) {
                 outcome = GalleryOutcome::OpenDetails(id);
             }
         });
@@ -308,7 +312,12 @@ fn card_metrics(ui: &egui::Ui, card_w: f32) -> CardMetrics {
     }
 }
 
-fn card_grid(ui: &mut egui::Ui, palette: ThemePalette, visible: &[&FeedEntry]) -> Option<String> {
+fn card_grid(
+    ui: &mut egui::Ui,
+    palette: ThemePalette,
+    visible: &[&FeedEntry],
+    step1: &Step1State,
+) -> Option<String> {
     let mut opened = None;
 
     let available = ui.available_width();
@@ -327,7 +336,7 @@ fn card_grid(ui: &mut egui::Ui, palette: ThemePalette, visible: &[&FeedEntry]) -
                     |ui| {
                         ui.set_width(metrics.card_w);
                         let clicked = ui
-                            .push_id(&entry.id, |ui| card(ui, palette, entry, &metrics))
+                            .push_id(&entry.id, |ui| card(ui, palette, entry, &metrics, step1))
                             .inner;
                         if clicked {
                             opened = Some(entry.id.clone());
@@ -360,13 +369,59 @@ const fn columns_as_f32(columns: usize) -> f32 {
     }
 }
 
+#[must_use]
+pub(crate) fn card_install_block(entry: &FeedEntry, step1: &Step1State) -> Option<InstallBlock> {
+    let tag = entry.game_version.as_deref()?;
+    install_block_cached(step1, entry.game.to_legacy_string(), tag)
+}
+
+fn paint_block_badge(
+    ui: &egui::Ui,
+    palette: ThemePalette,
+    art_rect: egui::Rect,
+    block: InstallBlock,
+) {
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
+
+    let pad_x = 8.0;
+    let pad_y = 2.0;
+    let text_color = redesign_pill_text(palette);
+    let font = egui::FontId::new(11.0, egui::FontFamily::Name("poppins_medium".into()));
+    let galley = painter.layout_no_wrap(block.label().to_string(), font.clone(), text_color);
+    let size = egui::vec2(galley.size().x + pad_x * 2.0, galley.size().y + pad_y * 2.0);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(art_rect.right() - 8.0 - size.x, art_rect.top() + 8.0),
+        size,
+    );
+
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(REDESIGN_BORDER_RADIUS_U8),
+        redesign_pill_warn(palette),
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        block.label(),
+        font,
+        text_color,
+    );
+}
+
 fn card(
     ui: &mut egui::Ui,
     palette: ThemePalette,
     entry: &FeedEntry,
     metrics: &CardMetrics,
+    step1: &Step1State,
 ) -> bool {
     let mut open_details = false;
+    let block = card_install_block(entry, step1);
+
+    if block.is_some() {
+        ui.multiply_opacity(0.45);
+    }
 
     redesign_box(ui, palette, None, |ui| {
         ui.set_min_height(metrics.content_h);
@@ -378,6 +433,9 @@ fn card(
             card_art::paint_cover(ui, palette, entry.game, &entry.id, png, art_rect);
         } else {
             card_art::paint(ui, palette, entry.game, art_rect);
+        }
+        if let Some(block) = block {
+            paint_block_badge(ui, palette, art_rect, block);
         }
 
         ui.add_space(10.0);
@@ -414,6 +472,9 @@ fn card(
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                 render_pill(ui, palette, entry.game.to_legacy_string(), PillTone::Info);
+                if let Some(tag) = entry.game_version.as_deref() {
+                    render_pill(ui, palette, tag, PillTone::Info);
+                }
                 for tag in &entry.tags {
                     render_pill(ui, palette, tag, PillTone::Neutral);
                 }
@@ -493,7 +554,88 @@ fn clipped_line(ui: &mut egui::Ui, width: f32, height: f32, body: impl FnOnce(&m
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+    use crate::app::compat_dlc_source::refresh_source_check;
+
+    struct TempFixture {
+        path: std::path::PathBuf,
+    }
+
+    impl TempFixture {
+        fn new(name: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "bio_stage_gallery_test_{name}_{}_{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn write_key(&self, bytes: &[u8]) {
+            std::fs::write(self.path.join("chitin.key"), bytes).unwrap();
+        }
+    }
+
+    impl Drop for TempFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn entry(game: Game, game_version: Option<&str>) -> FeedEntry {
+        FeedEntry {
+            id: "entry-under-test".to_string(),
+            name: "Entry Under Test".to_string(),
+            author: "BIO Team".to_string(),
+            description: String::new(),
+            tags: Vec::new(),
+            game,
+            featured: false,
+            version: "1.0.0".to_string(),
+            requirements: String::new(),
+            code: String::new(),
+            cover_png: None,
+            game_version: game_version.map(str::to_string),
+            order: 0,
+        }
+    }
+
+    #[test]
+    fn card_install_block_is_none_for_untagged_lists() {
+        let untagged = entry(Game::BG2EE, None);
+        assert_eq!(card_install_block(&untagged, &Step1State::default()), None);
+    }
+
+    #[test]
+    fn card_install_block_follows_the_probe() {
+        let matching = TempFixture::new("matching");
+        matching.write_key(b"data/PATCH26.BIF");
+        let mismatched = TempFixture::new("mismatched");
+        mismatched.write_key(b"data/PATCH27.BIF");
+
+        let tagged = entry(Game::BG2EE, Some("2.6"));
+
+        let mut step1_matching = Step1State {
+            bg2ee_game_folder: matching.path.to_string_lossy().to_string(),
+            ..Step1State::default()
+        };
+        refresh_source_check(&mut step1_matching);
+        assert_eq!(card_install_block(&tagged, &step1_matching), None);
+
+        let mut step1_mismatched = Step1State {
+            bg2ee_game_folder: mismatched.path.to_string_lossy().to_string(),
+            ..Step1State::default()
+        };
+        refresh_source_check(&mut step1_mismatched);
+        assert_eq!(
+            card_install_block(&tagged, &step1_mismatched),
+            Some(InstallBlock::VersionMismatch)
+        );
+    }
 
     #[test]
     fn count_label_pluralises_on_everything_but_one() {

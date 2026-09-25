@@ -35,6 +35,7 @@ pub(crate) struct ResidueSummary {
 pub(crate) struct SourceReport {
     pub(crate) sod: SodDlcState,
     pub(crate) residue: ResidueSummary,
+    pub(crate) game_version: Option<crate::app::game_version::GameVersion>,
 }
 
 const ENGINE_FOLDERS: [&str; 14] = [
@@ -152,6 +153,7 @@ pub(crate) fn inspect(folder: &Path, game: SourceGame) -> SourceReport {
             SodDlcState::NotApplicable
         },
         residue: residue_summary(folder),
+        game_version: crate::app::game_version::read_game_version(folder),
     }
 }
 
@@ -223,6 +225,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{SodDlcState, SourceGame, inspect};
+    use crate::app::game_version::GameVersion;
 
     struct TempFixture {
         path: std::path::PathBuf,
@@ -323,5 +326,18 @@ mod tests {
         let fixture = TempFixture::new("non_bgee");
         let report = inspect(&fixture.path, SourceGame::Bg2ee);
         assert_eq!(report.sod, SodDlcState::NotApplicable);
+    }
+
+    #[test]
+    fn inspect_reads_the_game_version() {
+        let solo_game = TempFixture::new("game_version_bgee");
+        std::fs::write(solo_game.path.join("chitin.key"), b"data/PATCH26.BIF").unwrap();
+        let report = inspect(&solo_game.path, SourceGame::Bgee);
+        assert_eq!(report.game_version, Some(GameVersion::V2_6));
+
+        let paired_game = TempFixture::new("game_version_bg2ee");
+        std::fs::write(paired_game.path.join("chitin.key"), b"data/PATCH26.BIF").unwrap();
+        let report = inspect(&paired_game.path, SourceGame::Bg2ee);
+        assert_eq!(report.game_version, Some(GameVersion::V2_6));
     }
 }

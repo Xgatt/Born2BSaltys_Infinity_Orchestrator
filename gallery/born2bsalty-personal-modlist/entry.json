@@ -7,5 +7,6 @@
   "game": "EET",
   "featured": true,
   "version": "1.0.0",
+  "order": 1,
   "requirements": "Baldur's Gate: Enhanced Edition with the Siege of Dragonspear DLC and Baldur's Gate II: Enhanced Edition, Windows only (EEex)"
 }

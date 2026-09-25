@@ -77,6 +77,8 @@ mod tests {
             requirements: String::new(),
             code: String::new(),
             cover_png: None,
+            game_version: None,
+            order: 0,
         }
     }
 
