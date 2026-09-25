@@ -60,6 +60,7 @@ pub(crate) struct DetailsHeader {
     pub(crate) author: Option<String>,
     pub(crate) version: Option<String>,
     pub(crate) game: Game,
+    pub(crate) game_version: Option<String>,
     pub(crate) description: Option<String>,
     pub(crate) fork_note: Option<String>,
     pub(crate) tags: Vec<String>,
@@ -77,6 +78,7 @@ impl DetailsHeader {
             author: Some(entry.author.clone()),
             version: Some(entry.version.clone()),
             game: entry.game,
+            game_version: preview.game_version.clone(),
             description: Some(entry.description.clone()),
             fork_note: None,
             tags: entry.tags.clone(),
@@ -109,6 +111,7 @@ impl DetailsHeader {
                 .map(str::to_string),
             version: None,
             game,
+            game_version: preview.game_version.clone(),
             description: preview
                 .description
                 .as_deref()
@@ -486,6 +489,13 @@ pub(crate) fn fact_rows(header: &DetailsHeader) -> Vec<FactRow> {
             value: header.game.to_legacy_string().to_string(),
         },
         FactRow {
+            label: "Game version".to_string(),
+            value: header
+                .game_version
+                .clone()
+                .unwrap_or_else(|| "any".to_string()),
+        },
+        FactRow {
             label: "Requires".to_string(),
             value: header.requirements.clone(),
         },
@@ -555,6 +565,7 @@ mod tests {
         ModlistSharePreview {
             bio_version: bio_version.to_string(),
             game_install: "EET".to_string(),
+            game_version: None,
             install_mode: "build_from_scanned_mods".to_string(),
             bgee_entries: 3,
             bg2ee_entries: 4,
@@ -614,7 +625,7 @@ mod tests {
         let rows = fact_rows(&header);
         assert_eq!(rows[0].value, "\u{2014}");
         assert_eq!(rows[1].value, "\u{2014}");
-        assert_eq!(rows[4].value, "\u{2014}");
+        assert_eq!(rows[5].value, "\u{2014}");
     }
 
     #[test]
@@ -700,6 +711,7 @@ mod tests {
                 "Author",
                 "Version",
                 "Game",
+                "Game version",
                 "Requires",
                 "Built with BIO",
                 "Sources"
@@ -709,9 +721,27 @@ mod tests {
         assert_eq!(rows[0].value, entry.author);
         assert_eq!(rows[1].value, entry.version);
         assert_eq!(rows[2].value, entry.game.to_legacy_string());
-        assert_eq!(rows[3].value, entry.requirements);
-        assert_eq!(rows[4].value, "0.1.0-test");
-        assert_eq!(rows[5].value, "all resolved");
+        assert_eq!(rows[3].value, "any");
+        assert_eq!(rows[4].value, entry.requirements);
+        assert_eq!(rows[5].value, "0.1.0-test");
+        assert_eq!(rows[6].value, "all resolved");
+    }
+
+    #[test]
+    fn fact_rows_show_the_game_version_or_any() {
+        let entry = &crate::ui::install::gallery::catalog::entries()[0];
+        let mut preview = eet_preview("0.1.0-test");
+        preview.game_version = Some("2.6".to_string());
+        let header = DetailsHeader::from_gallery_entry(entry, &preview);
+        let rows = fact_rows(&header);
+        assert_eq!(rows[2].label, "Game");
+        assert_eq!(rows[3].label, "Game version");
+        assert_eq!(rows[3].value, "2.6");
+
+        preview.game_version = None;
+        let header = DetailsHeader::from_gallery_entry(entry, &preview);
+        let rows = fact_rows(&header);
+        assert_eq!(rows[3].value, "any");
     }
 
     #[test]

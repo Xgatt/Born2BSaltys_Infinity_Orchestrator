@@ -362,6 +362,7 @@ fn preview(
     crate::app::modlist_share::ModlistSharePreview {
         bio_version: String::new(),
         game_install: game.to_string(),
+        game_version: None,
         install_mode: "custom".to_string(),
         bgee_entries: 0,
         bg2ee_entries: 0,

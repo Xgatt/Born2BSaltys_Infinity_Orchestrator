@@ -243,6 +243,7 @@ mod tests {
         ModlistSharePreview {
             bio_version: "0.1.0-test".to_string(),
             game_install: "EET".to_string(),
+            game_version: None,
             install_mode: "start_from_weidu_logs_then_review_edit".to_string(),
             bgee_entries: 0,
             bg2ee_entries: 0,

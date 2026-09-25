@@ -134,6 +134,7 @@ pub(crate) fn source_notice_blocks(state: &InstallScreenState) -> bool {
 #[must_use]
 pub(crate) fn begin_disabled_for(state: &InstallScreenState, checks: &DestinationChecks) -> bool {
     state.missing_source_issue.is_some()
+        || state.game_version_issue.is_some()
         || (source_notice_blocks(state) && !state.review.modify)
         || begin_disabled(&BeginGuards {
             name: &state.review.name,
@@ -284,6 +285,20 @@ fn render_all_source_notices(
         ui.add_space(16.0);
     }
 
+    if let Some(msg) = state.game_version_issue.clone() {
+        render_source_notice(
+            ui,
+            palette,
+            &SourceNotice {
+                severity: SourceNoticeSeverity::Warning,
+                text: msg,
+                remedy: SourceRemedy::WrongGameVersion,
+            },
+            action,
+        );
+        ui.add_space(16.0);
+    }
+
     if let Some(notice) = state.source_compat_issue.clone() {
         render_source_notice(ui, palette, &notice, action);
         ui.add_space(16.0);
@@ -332,6 +347,7 @@ const SOURCE_WARNING_TITLE_ORDER_MERGER: &str = "DLC Merger required";
 const SOURCE_WARNING_TITLE_CHANGE_SOURCE: &str = "BGEE source mismatch";
 const SOURCE_WARNING_TITLE_CLEAN_SOURCE: &str = "Modded game source";
 const SOURCE_WARNING_TITLE_SET_SOURCE_FOLDER: &str = "Game folder not set";
+const SOURCE_WARNING_TITLE_WRONG_GAME_VERSION: &str = "Wrong game version";
 const SOURCE_WARNING_ACTION_REINSTALL: &str = "This list cannot be reinstalled as provided. Use Create to make a modified copy with DLC Merger first in the BGEE installation order.";
 const SOURCE_WARNING_ACTION_CHOOSE_MODIFY: &str = "Choose \"Yes, review and modify\" when you install, then put DLC Merger first in the BGEE installation order.";
 const SOURCE_WARNING_ACTION_MODIFY_ON: &str =
@@ -348,6 +364,7 @@ pub(crate) const fn source_warning_title(remedy: SourceRemedy) -> &'static str {
         SourceRemedy::ChangeSource => SOURCE_WARNING_TITLE_CHANGE_SOURCE,
         SourceRemedy::CleanSource => SOURCE_WARNING_TITLE_CLEAN_SOURCE,
         SourceRemedy::SetSourceFolder => SOURCE_WARNING_TITLE_SET_SOURCE_FOLDER,
+        SourceRemedy::WrongGameVersion => SOURCE_WARNING_TITLE_WRONG_GAME_VERSION,
         SourceRemedy::None => "",
     }
 }
@@ -377,7 +394,10 @@ pub(crate) const fn source_warning_action_text(
             SOURCE_WARNING_ACTION_MODIFY_ON_CHANGE_SOURCE
         }
         (SourceRemedy::CleanSource, _) => SOURCE_WARNING_ACTION_CLEAN_SOURCE,
-        (SourceRemedy::SetSourceFolder | SourceRemedy::None, _) => "",
+        (
+            SourceRemedy::SetSourceFolder | SourceRemedy::WrongGameVersion | SourceRemedy::None,
+            _,
+        ) => "",
     }
 }
 
@@ -834,6 +854,7 @@ mod tests {
         let mut preview = crate::app::modlist_share::ModlistSharePreview {
             bio_version: String::new(),
             game_install: "EET".to_string(),
+            game_version: None,
             install_mode: String::new(),
             bgee_entries: 0,
             bg2ee_entries: 0,
@@ -1105,6 +1126,75 @@ mod tests {
             ..Default::default()
         };
         assert!(!begin_disabled_for(&state, &checks));
+    }
+
+    #[test]
+    fn version_issue_holds_begin_even_with_modify() {
+        let checks = DestinationChecks {
+            claim: DestinationClaim::Free,
+            ownership_blocks: false,
+            dest_valid: true,
+            dest_non_empty: false,
+        };
+        let mut state = InstallScreenState {
+            review: crate::ui::install::state_install::ReviewState {
+                name: "Tactical EET".to_string(),
+                ..Default::default()
+            },
+            import_code: "BIO-MODLIST-V1:CODE".to_string(),
+            missing_source_issue: None,
+            game_version_issue: Some(
+                "This modlist needs game version 2.6. The BG2EE game folder is version 2.7. Point Settings \u{2192} Paths at a game folder on version 2.6.".to_string(),
+            ),
+            ..Default::default()
+        };
+        assert!(begin_disabled_for(&state, &checks));
+        state.review.modify = true;
+        assert!(begin_disabled_for(&state, &checks));
+        state.review.modify = false;
+        assert!(begin_disabled_for(&state, &checks));
+    }
+
+    #[test]
+    fn version_issue_holds_begin_on_reinstall() {
+        let checks = DestinationChecks {
+            claim: DestinationClaim::Free,
+            ownership_blocks: false,
+            dest_valid: true,
+            dest_non_empty: false,
+        };
+        let state = InstallScreenState {
+            review: crate::ui::install::state_install::ReviewState {
+                name: "Tactical EET".to_string(),
+                origin: ReviewOrigin::Reinstall,
+                ..Default::default()
+            },
+            import_code: "BIO-MODLIST-V1:CODE".to_string(),
+            missing_source_issue: None,
+            game_version_issue: Some(
+                "This modlist needs game version 2.6. The BG2EE game folder is version 2.7. Point Settings \u{2192} Paths at a game folder on version 2.6.".to_string(),
+            ),
+            ..Default::default()
+        };
+        assert!(begin_disabled_for(&state, &checks));
+    }
+
+    #[test]
+    fn wrong_game_version_title_and_empty_action() {
+        assert_eq!(
+            source_warning_title(SourceRemedy::WrongGameVersion),
+            "Wrong game version"
+        );
+        for action in [
+            SourceWarningAction::Reinstall,
+            SourceWarningAction::ChooseModify,
+            SourceWarningAction::ModifyOn,
+        ] {
+            assert_eq!(
+                source_warning_action_text(action, SourceRemedy::WrongGameVersion),
+                ""
+            );
+        }
     }
 
     #[test]

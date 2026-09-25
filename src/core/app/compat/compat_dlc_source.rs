@@ -123,6 +123,7 @@ pub(crate) enum SourceRemedy {
     ChangeSource,
     CleanSource,
     SetSourceFolder,
+    WrongGameVersion,
     None,
 }
 

@@ -353,6 +353,7 @@ pub struct InstallScreenState {
     pub(crate) source_residue_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
     pub(crate) unresolved_sources_issue: Option<crate::app::compat_dlc_source::SourceNotice>,
     pub(crate) missing_source_issue: Option<String>,
+    pub(crate) game_version_issue: Option<String>,
     pub stage: InstallStage,
     pub pipeline_kind: PipelineKind,
     pub(crate) gallery: GalleryScreenState,
@@ -434,6 +435,7 @@ impl InstallScreenState {
         self.source_residue_issue = None;
         self.unresolved_sources_issue = None;
         self.missing_source_issue = None;
+        self.game_version_issue = None;
         self.parsed_preview = None;
         self.preview_parse_error = None;
         self.inside = None;
@@ -778,6 +780,7 @@ mod tests {
         let preview = ModlistSharePreview {
             bio_version: "0.1.0-test".to_string(),
             game_install: "EET".to_string(),
+            game_version: None,
             install_mode: "build_from_scanned_mods".to_string(),
             bgee_entries: 0,
             bg2ee_entries: 0,

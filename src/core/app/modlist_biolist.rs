@@ -120,6 +120,8 @@ struct ReferenceModlist {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     game: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_version: Option<String>,
     install_mode: String,
     bio_version: String,
     format_version: u64,
@@ -151,6 +153,7 @@ fn write_reference_modlist(
         author: payload.author.clone(),
         description: payload.description.clone(),
         game: payload.game_install.clone(),
+        game_version: payload.game_version.clone(),
         install_mode: payload.install_mode.clone(),
         bio_version: payload.bio_version.clone(),
         format_version: payload.format_version,
@@ -432,6 +435,34 @@ mod tests {
             .map(|value| value.as_str().expect("string entry").to_string())
             .collect::<Vec<_>>();
         assert_eq!(unresolved_mods, vec!["Some Mod".to_string()]);
+    }
+
+    #[test]
+    fn reference_modlist_carries_the_game_version_when_tagged() {
+        let tagged_json = r#"{
+            "format_version": 1,
+            "game_install": "BGEE",
+            "game_version": "2.6",
+            "install_mode": "start_from_scratch",
+            "weidu_logs": { "bgee": "~MOD/MOD.TP2~ #0 #0 // A component: 1.0" }
+        }"#;
+        let code =
+            crate::app::modlist_share::encode_share_payload_text(tagged_json).expect("encode");
+        let bytes = build_biolist(&code).expect("build biolist");
+        let modlist_toml = entry_text(&bytes, "reference/modlist.toml");
+        let parsed: toml::Value = toml::from_str(&modlist_toml).expect("modlist.toml parses");
+        assert_eq!(
+            parsed.get("game_version").and_then(toml::Value::as_str),
+            Some("2.6")
+        );
+
+        let untagged_code =
+            crate::app::modlist_share::encode_share_payload_text(&minimal_bgee_only_payload_json())
+                .expect("encode");
+        let bytes = build_biolist(&untagged_code).expect("build biolist");
+        let modlist_toml = entry_text(&bytes, "reference/modlist.toml");
+        let parsed: toml::Value = toml::from_str(&modlist_toml).expect("modlist.toml parses");
+        assert!(parsed.get("game_version").is_none());
     }
 
     #[test]

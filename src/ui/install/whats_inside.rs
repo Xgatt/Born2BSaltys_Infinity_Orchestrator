@@ -268,6 +268,7 @@ mod tests {
         ModlistSharePreview {
             bio_version: "0.1.0-test".to_string(),
             game_install: "EET".to_string(),
+            game_version: None,
             install_mode: "build_from_scanned_mods".to_string(),
             bgee_entries: 3,
             bg2ee_entries: 4,

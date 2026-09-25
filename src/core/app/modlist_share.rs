@@ -106,6 +106,7 @@ pub(crate) fn export_modlist_share_code_with(
     move_first_slot_log_to_iwdee_key(&mut payload, weidu_logs.iwdee.as_deref());
     insert_unresolved_mods(&mut payload, &sources.unresolved_mods);
     insert_export_provenance(&mut payload, state);
+    insert_game_version(&mut payload, state);
     let payload_text = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
     encode_share_payload_text(&payload_text)
 }
@@ -122,6 +123,17 @@ fn move_first_slot_log_to_iwdee_key(payload: &mut serde_json::Value, iwdee_text:
     };
     logs.remove("bgee");
     logs.insert("iwdee".to_string(), json!(text));
+}
+
+fn insert_game_version(payload: &mut serde_json::Value, state: &WizardState) {
+    let Some(version) = crate::app::game_version::mint_tag(&state.step1, &state.step1.game_install)
+    else {
+        return;
+    };
+    let Some(obj) = payload.as_object_mut() else {
+        return;
+    };
+    obj.insert("game_version".to_string(), json!(version.tag()));
 }
 
 fn insert_unresolved_mods(payload: &mut serde_json::Value, unresolved_mods: &[String]) {
@@ -185,6 +197,7 @@ fn insert_export_provenance(payload: &mut serde_json::Value, state: &WizardState
 pub(crate) struct ModlistSharePreview {
     pub(crate) bio_version: String,
     pub(crate) game_install: String,
+    pub(crate) game_version: Option<String>,
     pub(crate) install_mode: String,
     pub(crate) bgee_entries: usize,
     pub(crate) bg2ee_entries: usize,
@@ -279,6 +292,8 @@ pub(crate) struct ModlistSharePayload {
     #[serde(default)]
     pub(crate) bio_version: String,
     pub(crate) game_install: String,
+    #[serde(default)]
+    pub(crate) game_version: Option<String>,
     pub(crate) install_mode: String,
     #[serde(default)]
     pub(crate) weidu_logs: ModlistShareWeiduLogs,
@@ -398,6 +413,12 @@ fn share_preview(payload: &ModlistSharePayload) -> Result<ModlistSharePreview, S
     Ok(ModlistSharePreview {
         bio_version: payload.bio_version.clone(),
         game_install: payload.game_install.clone(),
+        game_version: payload
+            .game_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string),
         install_mode,
         bgee_entries: first_game_entries,
         bg2ee_entries: second_game_entries,
@@ -1451,6 +1472,97 @@ mod tests {
                 .contains("[[mods]]\nname = \"X\"")
         );
         assert!(preview.installed_refs_text.contains("[sources]\nx = \"y\""));
+    }
+
+    struct GameVersionFixture {
+        path: std::path::PathBuf,
+    }
+
+    impl GameVersionFixture {
+        fn new(label: &str, patch: &[u8]) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "bio_modlist_share_game_version_{label}_{}_{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("chitin.key"), patch).unwrap();
+            Self { path: root }
+        }
+    }
+
+    impl Drop for GameVersionFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn export_writes_the_game_version_when_the_install_copy_reads_2_6() {
+        let fixture = GameVersionFixture::new("writes_2_6", b"data/PATCH26.BIF");
+        let mut state = state_with_one_bgee_component();
+        state.step3.bg2ee_items = state.step3.bgee_items.clone();
+        state.step1.game_install = "BG2EE".to_string();
+        state.step1.generate_directory = fixture.path.to_string_lossy().to_string();
+
+        let code =
+            export_modlist_share_code_with(&state, &ShareExportSources::default()).expect("export");
+        let payload = decode_share_payload(&code).expect("decode");
+
+        assert_eq!(payload.game_version.as_deref(), Some("2.6"));
+    }
+
+    #[test]
+    fn export_omits_the_game_version_without_a_readable_folder() {
+        let mut state = state_with_one_bgee_component();
+        state.step3.bg2ee_items = state.step3.bgee_items.clone();
+        state.step1.game_install = "BG2EE".to_string();
+        state.step1.generate_directory = String::new();
+
+        let code =
+            export_modlist_share_code_with(&state, &ShareExportSources::default()).expect("export");
+        let payload = decode_share_payload(&code).expect("decode");
+
+        assert_eq!(payload.game_version, None);
+    }
+
+    #[test]
+    fn preview_surfaces_the_tag_and_blank_is_none() {
+        let payload: ModlistSharePayload = serde_json::from_str(
+            r#"{
+                "format_version": 1,
+                "game_install": "BGEE",
+                "game_version": "2.6",
+                "install_mode": "start_from_scratch",
+                "weidu_logs": { "bgee": "~MOD/MOD.TP2~ #0 #0 // A component: 1.0" }
+            }"#,
+        )
+        .expect("payload parses");
+        let preview = share_preview(&payload).expect("preview");
+        assert_eq!(preview.game_version.as_deref(), Some("2.6"));
+
+        let blank_payload: ModlistSharePayload = serde_json::from_str(
+            r#"{
+                "format_version": 1,
+                "game_install": "BGEE",
+                "game_version": "   ",
+                "install_mode": "start_from_scratch",
+                "weidu_logs": { "bgee": "~MOD/MOD.TP2~ #0 #0 // A component: 1.0" }
+            }"#,
+        )
+        .expect("blank payload parses");
+        let blank_preview = share_preview(&blank_payload).expect("preview");
+        assert_eq!(blank_preview.game_version, None);
+    }
+
+    #[test]
+    fn untagged_code_previews_none() {
+        let payload: ModlistSharePayload =
+            serde_json::from_str(FIELDLESS_PAYLOAD_JSON).expect("fieldless payload must parse");
+        let preview = share_preview(&payload).expect("preview");
+        assert_eq!(preview.game_version, None);
     }
 
     struct AmbientGuard(Option<std::path::PathBuf>);

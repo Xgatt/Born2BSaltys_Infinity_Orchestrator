@@ -289,7 +289,12 @@ fn begin_install(orchestrator: &mut OrchestratorApp) -> InstallStage {
         &mut orchestrator.install_screen_state,
         &orchestrator.wizard_state.step1,
     );
-    if stage_review::source_notice_blocks(&orchestrator.install_screen_state) {
+    if stage_review::source_notice_blocks(&orchestrator.install_screen_state)
+        || orchestrator
+            .install_screen_state
+            .game_version_issue
+            .is_some()
+    {
         orchestrator.install_screen_state.drawer.open = Some(DrawerKind::Install);
         return InstallStage::Details;
     }
@@ -346,6 +351,18 @@ fn begin_install(orchestrator: &mut OrchestratorApp) -> InstallStage {
 }
 
 fn begin_import(orchestrator: &mut OrchestratorApp) -> Option<InstallStage> {
+    refresh_source_compat_issue(
+        &mut orchestrator.install_screen_state,
+        &orchestrator.wizard_state.step1,
+    );
+    if orchestrator
+        .install_screen_state
+        .game_version_issue
+        .is_some()
+    {
+        orchestrator.install_screen_state.drawer.open = Some(DrawerKind::Install);
+        return None;
+    }
     if !orchestrator.ensure_creator_name() {
         return None;
     }
@@ -532,6 +549,11 @@ pub(crate) fn refresh_source_compat_issue(
             &crate::app::game_authority::missing_source_folders(step1, &preview.game_install),
         )
     });
+    state.game_version_issue = state.parsed_preview.as_ref().and_then(|preview| {
+        preview.game_version.as_deref().and_then(|tag| {
+            crate::app::game_version::version_mismatch_message(step1, &preview.game_install, tag)
+        })
+    });
 }
 
 #[cfg(test)]
@@ -594,6 +616,7 @@ mod tests {
         app.install_screen_state.parsed_preview = Some(ModlistSharePreview {
             bio_version: String::new(),
             game_install: "BGEE".to_string(),
+            game_version: None,
             install_mode: "custom".to_string(),
             bgee_entries: 0,
             bg2ee_entries: 0,
@@ -646,6 +669,7 @@ mod tests {
         app.install_screen_state.parsed_preview = Some(ModlistSharePreview {
             bio_version: String::new(),
             game_install: "BGEE".to_string(),
+            game_version: None,
             install_mode: "custom".to_string(),
             bgee_entries: 0,
             bg2ee_entries: 0,
@@ -691,6 +715,7 @@ mod tests {
             ModlistSharePreview {
                 bio_version: String::new(),
                 game_install: game_install.to_string(),
+                game_version: None,
                 install_mode: "custom".to_string(),
                 bgee_entries: 0,
                 bg2ee_entries: 0,
@@ -731,6 +756,161 @@ mod tests {
         app.install_screen_state.parsed_preview = Some(preview("BGEE"));
         refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
         assert!(app.install_screen_state.missing_source_issue.is_none());
+    }
+
+    struct GameVersionFixture {
+        path: std::path::PathBuf,
+    }
+
+    impl GameVersionFixture {
+        fn new(name: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "bio_page_install_gameversion_{name}_{}_{id}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create game version fixture");
+            Self { path }
+        }
+
+        fn write_key(&self, bytes: &[u8]) {
+            std::fs::write(self.path.join("chitin.key"), bytes).expect("write chitin.key");
+        }
+    }
+
+    impl Drop for GameVersionFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn versioned_preview(
+        game_install: &str,
+        game_version: Option<&str>,
+    ) -> crate::app::modlist_share::ModlistSharePreview {
+        crate::app::modlist_share::ModlistSharePreview {
+            bio_version: String::new(),
+            game_install: game_install.to_string(),
+            game_version: game_version.map(str::to_string),
+            install_mode: "custom".to_string(),
+            bgee_entries: 0,
+            bg2ee_entries: 0,
+            has_source_overrides: false,
+            has_installed_refs: false,
+            bgee_log_text: String::new(),
+            bg2ee_log_text: String::new(),
+            source_overrides_text: String::new(),
+            installed_refs_text: String::new(),
+            mod_config_count: 0,
+            mod_configs_text: String::new(),
+            allow_auto_install: true,
+            name: None,
+            author: None,
+            description: None,
+            forked_from: Vec::new(),
+            unresolved_mods: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn untagged_list_has_no_version_issue() {
+        let fixture = GameVersionFixture::new("untagged");
+        fixture.write_key(b"data/PATCH26.BIF\0data/PATCH27.bif");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bg2ee_game_folder = fixture.path.to_string_lossy().into_owned();
+        app.install_screen_state.parsed_preview = Some(versioned_preview("BG2EE", None));
+
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert!(app.install_screen_state.game_version_issue.is_none());
+    }
+
+    #[test]
+    fn tagged_list_on_the_wrong_version_gets_an_issue() {
+        let fixture = GameVersionFixture::new("wrong_version");
+        fixture.write_key(b"data/PATCH26.BIF\0data/PATCH27.bif");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bg2ee_game_folder = fixture.path.to_string_lossy().into_owned();
+        app.install_screen_state.parsed_preview = Some(versioned_preview("BG2EE", Some("2.6")));
+
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert_eq!(
+            app.install_screen_state.game_version_issue,
+            Some(
+                "This modlist needs game version 2.6. The BG2EE game folder is version 2.7. Point Settings \u{2192} Paths at a game folder on version 2.6."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn tagged_list_on_the_matching_folder_has_no_issue() {
+        let fixture = GameVersionFixture::new("matching_version");
+        fixture.write_key(b"data/PATCH26.BIF");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bg2ee_game_folder = fixture.path.to_string_lossy().into_owned();
+        app.install_screen_state.parsed_preview = Some(versioned_preview("BG2EE", Some("2.6")));
+
+        refresh_source_compat_issue(&mut app.install_screen_state, &app.wizard_state.step1);
+        assert!(app.install_screen_state.game_version_issue.is_none());
+    }
+
+    #[test]
+    fn begin_install_rechecks_the_game_version() {
+        let fixture = GameVersionFixture::new("begin_install_stale");
+        fixture.write_key(b"data/PATCH27.bif");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bg2ee_game_folder = fixture.path.to_string_lossy().into_owned();
+        app.install_screen_state.parsed_preview = Some(versioned_preview("BG2EE", Some("2.6")));
+
+        let stage = begin_install(&mut app);
+
+        assert_eq!(stage, InstallStage::Details);
+        assert!(app.install_screen_state.game_version_issue.is_some());
+        assert_eq!(
+            app.install_screen_state.drawer.open,
+            Some(DrawerKind::Install)
+        );
+    }
+
+    #[test]
+    fn begin_install_proceeds_on_the_matching_version() {
+        let fixture = GameVersionFixture::new("begin_install_matching");
+        fixture.write_key(b"data/PATCH26.BIF");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bg2ee_game_folder = fixture.path.to_string_lossy().into_owned();
+        app.install_screen_state.import_code = "BIO-MODLIST-V1:STUB".to_string();
+        app.install_screen_state.parsed_preview = Some(versioned_preview("BG2EE", Some("2.6")));
+        app.install_screen_state.review.name = "Tactical EET".to_string();
+        app.install_screen_state.destination = "D:\\eet install".to_string();
+
+        let stage = begin_install(&mut app);
+
+        assert_eq!(stage, InstallStage::Downloading);
+    }
+
+    #[test]
+    fn begin_import_rechecks_the_game_version() {
+        let fixture = GameVersionFixture::new("begin_import_stale");
+        fixture.write_key(b"data/PATCH27.bif");
+
+        let mut app = orch_for_install_test();
+        app.wizard_state.step1.bg2ee_game_folder = fixture.path.to_string_lossy().into_owned();
+        app.install_screen_state.parsed_preview = Some(versioned_preview("BG2EE", Some("2.6")));
+
+        let outcome = begin_import(&mut app);
+
+        assert!(outcome.is_none());
+        assert!(app.install_screen_state.game_version_issue.is_some());
+        assert_eq!(
+            app.install_screen_state.drawer.open,
+            Some(DrawerKind::Install)
+        );
     }
 
     #[test]
@@ -1146,6 +1326,7 @@ mod tests {
         app.install_screen_state.parsed_preview = Some(ModlistSharePreview {
             bio_version: String::new(),
             game_install: "BGEE".to_string(),
+            game_version: None,
             install_mode: "custom".to_string(),
             bgee_entries: 0,
             bg2ee_entries: 0,

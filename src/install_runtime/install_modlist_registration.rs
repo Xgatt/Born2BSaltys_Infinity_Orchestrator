@@ -418,6 +418,7 @@ mod tests {
         ModlistSharePreview {
             bio_version: "x".to_string(),
             game_install: game.to_string(),
+            game_version: None,
             install_mode: "build-from-scanned-mods".to_string(),
             bgee_entries: 0,
             bg2ee_entries: 0,
