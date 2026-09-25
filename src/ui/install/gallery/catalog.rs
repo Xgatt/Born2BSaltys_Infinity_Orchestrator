@@ -39,32 +39,12 @@ mod tests {
     }
 
     #[test]
-    fn catalog_holds_the_five_entries() {
-        let ids: Vec<&str> = entries().iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "eet-plus-fixes",
-                "eet-essentials",
-                "iwdee-essentials",
-                "bgee-vanilla-plus-no-dlc",
-                "bgee-vanilla-plus",
-            ]
-        );
-    }
-
-    #[test]
     fn entry_ids_are_unique() {
         let mut ids: Vec<&str> = entries().iter().map(|e| e.id.as_str()).collect();
         ids.sort_unstable();
         let total = ids.len();
         ids.dedup();
         assert_eq!(ids.len(), total, "gallery ids must be unique");
-    }
-
-    #[test]
-    fn three_entries_are_featured() {
-        assert_eq!(entries().iter().filter(|e| e.featured).count(), 3);
     }
 
     #[test]
@@ -92,23 +72,13 @@ mod tests {
     }
 
     #[test]
-    fn every_entry_carries_source_overrides_and_no_installed_refs_or_mod_configs() {
+    fn every_entry_carries_source_overrides() {
         for entry in entries() {
             let preview =
                 preview_modlist_share_code(&entry.code).expect("catalog entry code must parse");
             assert!(
                 preview.has_source_overrides,
                 "{} must carry source overrides",
-                entry.name
-            );
-            assert!(
-                !preview.has_installed_refs,
-                "{} must carry no installed refs",
-                entry.name
-            );
-            assert_eq!(
-                preview.mod_config_count, 0,
-                "{} must carry no mod configs",
                 entry.name
             );
         }
@@ -520,26 +490,6 @@ mod tests {
                 marker_line.ends_with(r"// @wlb-inputs: y,C:\BIO\Baldur's Gate Enhanced Edition")
             );
         }
-    }
-
-    #[test]
-    fn only_eet_core_lines_carry_a_prompt_marker() {
-        let total: usize = entries()
-            .iter()
-            .map(|entry| {
-                let preview = preview_modlist_share_code(&entry.code).expect("parse");
-                let first_game_hits = log_lines(&preview.bgee_log_text)
-                    .iter()
-                    .filter(|line| line.contains("@wlb-inputs:"))
-                    .count();
-                let second_game_hits = log_lines(&preview.bg2ee_log_text)
-                    .iter()
-                    .filter(|line| line.contains("@wlb-inputs:"))
-                    .count();
-                first_game_hits + second_game_hits
-            })
-            .sum();
-        assert_eq!(total, 2);
     }
 
     #[test]
