@@ -419,20 +419,20 @@ fn card(
     let mut open_details = false;
     let block = card_install_block(entry, step1);
 
-    if block.is_some() {
-        ui.multiply_opacity(0.45);
-    }
-
     redesign_box(ui, palette, None, |ui| {
         ui.set_min_height(metrics.content_h);
         let inner_w = ui.available_width();
 
         let (art_rect, _) =
             ui.allocate_exact_size(egui::vec2(inner_w, metrics.art_h), egui::Sense::hover());
+        let mut art_ui = ui.new_child(egui::UiBuilder::new().max_rect(art_rect));
+        if block.is_some() {
+            art_ui.multiply_opacity(0.45);
+        }
         if let Some(png) = entry.cover_png.as_deref() {
-            card_art::paint_cover(ui, palette, entry.game, &entry.id, png, art_rect);
+            card_art::paint_cover(&art_ui, palette, entry.game, &entry.id, png, art_rect);
         } else {
-            card_art::paint(ui, palette, entry.game, art_rect);
+            card_art::paint(&art_ui, palette, entry.game, art_rect);
         }
         if let Some(block) = block {
             paint_block_badge(ui, palette, art_rect, block);
