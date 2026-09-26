@@ -6974,6 +6974,25 @@ tp2 = "XGTCustomizableXPGain"
   pkg_linux = "lin,rar,zip"
   pkg_macos = "mac,rar,zip"
 
+[[mods]]
+name = "wl_HouseRules"
+tp2 = "wl_HouseRules"
+
+  [[mods.sources]]
+  id = "xgatt"
+  label = "Xgatt"
+  type = "github"
+  url = "https://github.com/Xgatt/WL-House-Rules-EET"
+  repo = "Xgatt/WL-House-Rules-EET"
+  commit = ""
+  tag = ""
+  branch = ""
+  channel = ""
+  asset = ""
+  pkg_windows = ""
+  pkg_linux = ""
+  pkg_macos = ""
+
 #////////////////////////////////////////////////#
 #//            Alexander12-creator             //#
 #////////////////////////////////////////////////#
@@ -8143,13 +8162,3 @@ tp2 = "PaintBG"
   label = "Source"
   type = "url"
   url = "http://www.spellholdstudios.net/ie/portraits"
-
-[[mods]]
-name = "House Rules"
-tp2 = "wl_HouseRules"
-
-  [[mods.sources]]
-  id = "primary"
-  label = "Source"
-  type = "url"
-  url = "https://www.nexusmods.com/baldursgate2ee/mods/110?tab=files&file_id=339"
